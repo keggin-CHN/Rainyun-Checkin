@@ -1,6 +1,7 @@
 .ace-tool/
 __pycache__/
 *.pyc
+.env
 .env.local
 cookies.json
 temp/
