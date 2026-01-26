@@ -12,6 +12,7 @@
 | [X] 验证码识别 | 🟢 支持 | 使用 ddddocr 自动识别滑块验证码 |
 | [X] 多平台通知 | 🟢 支持 | Server酱、Bark 等通知渠道 |
 | [X] GitHub Actions 部署 | 🟢 支持 | 无需服务器，完全免费 |
+| [X] 积分续费任务 | 🟢 支持 | 每 7 天自动续费指定产品 |
 | [X] Docker 支持 | 🟢 支持 | 可选 Docker 容器化部署 |
 | [X] 随机延迟 | 🟢 支持 | 避免请求模式被识别 |
 | [x] 仓库自动保功能 | 🟢 支持 | 防止60天不动被关 |
@@ -103,6 +104,19 @@ Rainyun-Checkin/
 schedule:
   - cron: '0 0 * * *'  # UTC 0:00 = 北京时间 8:00
 ```
+
+## 🔄 积分续费任务
+
+仓库内置 `积分续费` 工作流，每 7 天自动执行一次积分续费请求。使用前请设置 `RAINYUN_API_KEY` 和 `RAINYUN_PRODUCT_ID`（服务器 ID）。
+
+```yaml
+schedule:
+  - cron: '0 0 */7 * *'  # UTC 0:00 = 北京时间 8:00，每 7 天执行一次
+```
+
+需要的 Secrets：
+- `RAINYUN_API_KEY`: 雨云后台 API 密钥
+- `RAINYUN_PRODUCT_ID`: 续费服务器 ID（雨云后台产品列表中可查看，或在产品详情页 URL 中获取）
 
 ## 🔄 更新脚本
 ```bash

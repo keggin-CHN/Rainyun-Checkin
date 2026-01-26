@@ -1,0 +1,56 @@
+name: 积分续费
+
+on:
+  schedule:
+    - cron: '0 0 */7 * *'
+  workflow_dispatch:
+
+jobs:
+  point-renew:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 执行积分续费
+        env:
+          RAINYUN_API_KEY: ${{ secrets.RAINYUN_API_KEY }}
+          RAINYUN_PRODUCT_ID: ${{ secrets.RAINYUN_PRODUCT_ID }}
+        run: |
+          if [ -z "${RAINYUN_API_KEY}" ]; then
+            echo "缺少 RAINYUN_API_KEY，请在仓库 Secrets 中配置"
+            exit 1
+          fi
+          if [ -z "${RAINYUN_PRODUCT_ID}" ]; then
+            echo "缺少 RAINYUN_PRODUCT_ID，请在仓库 Secrets 中配置"
+            exit 1
+          fi
+          python - <<'PY'
+          import os
+          import sys
+          from api_client import RainyunAPI, RainyunAPIError
+          api_key = os.environ["RAINYUN_API_KEY"]
+          product_id_raw = os.environ["RAINYUN_PRODUCT_ID"]
+          try:
+            product_id = int(product_id_raw)
+          except ValueError:
+            print(f"RAINYUN_PRODUCT_ID 必须是数字，当前为: {product_id_raw}")
+            sys.exit(1)
+          api = RainyunAPI(api_key)
+          try:
+            result = api.renew_server(product_id, days=7)
+          except RainyunAPIError as exc:
+            print(f"续费失败: {exc}")
+            sys.exit(1)
+          print("续费完成:", result)
+          PY
