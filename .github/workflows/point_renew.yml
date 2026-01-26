@@ -35,10 +35,20 @@ jobs:
           fi
           python - <<'PY'
           import os
-          from api_client import RainyunAPI
+          import sys
+          from api_client import RainyunAPI, RainyunAPIError
           api_key = os.environ["RAINYUN_API_KEY"]
-          product_id = int(os.environ["RAINYUN_PRODUCT_ID"])
+          product_id_raw = os.environ["RAINYUN_PRODUCT_ID"]
+          try:
+            product_id = int(product_id_raw)
+          except ValueError:
+            print(f"RAINYUN_PRODUCT_ID 必须是数字，当前为: {product_id_raw}")
+            sys.exit(1)
           api = RainyunAPI(api_key)
-          result = api.renew_server(product_id, days=7)
+          try:
+            result = api.renew_server(product_id, days=7)
+          except RainyunAPIError as exc:
+            print(f"续费失败: {exc}")
+            sys.exit(1)
           print("续费完成:", result)
           PY
