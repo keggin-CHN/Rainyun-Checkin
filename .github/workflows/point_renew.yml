@@ -1,0 +1,27 @@
+name: 积分续费
+
+on:
+  schedule:
+    - cron: '0 8 */7 * *'
+  workflow_dispatch:
+
+jobs:
+  point-renew:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 执行积分续费
+        env:
+          RAINYUN_API_KEY: ${{ secrets.RAINYUN_API_KEY }}
+        run: |
+          if [ -z "${RAINYUN_API_KEY}" ]; then
+            echo "缺少 RAINYUN_API_KEY，请在仓库 Secrets 中配置"
+            exit 1
+          fi
+          curl --location --fail-with-body --request POST "https://api.v2.rainyun.com/product/point_renew" \
+            --header "x-api-key: ${RAINYUN_API_KEY}" \
+            --header "Content-Type: application/json" \
+            --data-raw '{
+              "duration_day": 7,
+              "product_id": 64393,
+              "product_type": "rgs"
+            }'
