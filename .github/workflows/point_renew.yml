@@ -9,19 +9,36 @@ jobs:
   point-renew:
     runs-on: ubuntu-latest
     steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
       - name: 执行积分续费
         env:
           RAINYUN_API_KEY: ${{ secrets.RAINYUN_API_KEY }}
+          RAINYUN_PRODUCT_ID: ${{ secrets.RAINYUN_PRODUCT_ID }}
         run: |
           if [ -z "${RAINYUN_API_KEY}" ]; then
             echo "缺少 RAINYUN_API_KEY，请在仓库 Secrets 中配置"
             exit 1
           fi
-          curl --location --fail-with-body --request POST "https://api.v2.rainyun.com/product/point_renew" \
-            --header "x-api-key: ${RAINYUN_API_KEY}" \
-            --header "Content-Type: application/json" \
-            --data-raw '{
-              "duration_day": 7,
-              "product_id": 64393,
-              "product_type": "rgs"
-            }'
+          if [ -z "${RAINYUN_PRODUCT_ID}" ]; then
+            echo "缺少 RAINYUN_PRODUCT_ID，请在仓库 Secrets 中配置"
+            exit 1
+          fi
+          python - <<'PY'
+          import os
+          from api_client import RainyunAPI
+          api_key = os.environ["RAINYUN_API_KEY"]
+          product_id = int(os.environ["RAINYUN_PRODUCT_ID"])
+          api = RainyunAPI(api_key)
+          result = api.renew_server(product_id, days=7)
+          print("续费完成:", result)
+          PY

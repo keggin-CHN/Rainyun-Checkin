@@ -107,7 +107,7 @@ schedule:
 
 ## 🔄 积分续费任务
 
-仓库内置 `积分续费` 工作流，每 7 天自动执行一次积分续费请求。使用前请设置 `RAINYUN_API_KEY`，并确认续费产品 ID。
+仓库内置 `积分续费` 工作流，每 7 天自动执行一次积分续费请求。使用前请设置 `RAINYUN_API_KEY` 和 `RAINYUN_PRODUCT_ID`。
 
 ```yaml
 schedule:
@@ -116,6 +116,7 @@ schedule:
 
 需要的 Secrets：
 - `RAINYUN_API_KEY`: 雨云后台 API 密钥
+- `RAINYUN_PRODUCT_ID`: 续费产品 ID（雨云后台产品列表中可查看，或在产品详情页 URL 中获取）
 
 ## 🔄 更新脚本
 ```bash
