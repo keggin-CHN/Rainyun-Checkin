@@ -98,8 +98,8 @@ Rainyun-Checkin/
 
 ## ⏰ GitHub Actions 自动触发条件
 - **自动签到（.github/workflows/checkin.yml）**：每天 UTC 08:00（北京时间 16:00）自动执行，支持手动触发
-- **积分续费（.github/workflows/point_renew.yml）**：每 7 天 UTC 00:00（北京时间 08:00）自动执行，支持手动触发
-- **仓库保活（.github/workflows/keepalive.yml）**：每 14 天 UTC 00:00（北京时间 08:00）自动执行，支持手动触发
+- **积分续费（.github/workflows/point_renew.yml）**：每月按日历日 `*/7`（如 1/8/15/22/29 日）UTC 00:00 自动执行，支持手动触发
+- **仓库保活（.github/workflows/keepalive.yml）**：每月按日历日 `*/14`（如 1/15/29 日）UTC 00:00 自动执行，支持手动触发
 - **时区**：GitHub Actions 使用 UTC 时间
 
 ```yaml
