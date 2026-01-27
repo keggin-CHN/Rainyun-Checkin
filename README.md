@@ -42,7 +42,7 @@ https://img.shields.io/badge/Fork-本仓库-4285F4?style=for-the-badge&logo=gith
 4. 等待约 1-2 分钟完成首次测试
 
 ### 4. 查看结果
-[X] 成功后，每天 **UTC 08:00**（北京时间 16:00）会自动执行，也支持手动触发
+[X] 成功后，每天 **UTC 00:00**（北京时间 08:00）会自动执行，也支持手动触发
 
 ## ⚙️ 环境变量配置
 
@@ -97,15 +97,15 @@ Rainyun-Checkin/
 3. 如有错误，截图 Issue 方便排查
 
 ## ⏰ GitHub Actions 自动触发条件
-- **自动签到（.github/workflows/checkin.yml）**：每天 UTC 08:00（北京时间 16:00）自动执行，支持手动触发
+- **自动签到（.github/workflows/checkin.yml）**：每天 UTC 00:00（北京时间 08:00）自动执行，支持手动触发
 - **积分续费（.github/workflows/point_renew.yml）**：按 cron `0 0 */7 * *` 规则在 UTC 00:00 自动执行（具体日期按 GitHub cron 规则计算），支持手动触发
 - **仓库保活（.github/workflows/keepalive.yml）**：按 cron `0 0 */14 * *` 规则在 UTC 00:00 自动执行（具体日期按 GitHub cron 规则计算），支持手动触发
 - **时区**：GitHub Actions 使用 UTC 时间
 
 ```yaml
-# 示例：每天北京时间 16:00 执行
+# 示例：每天北京时间 08:00 执行
 schedule:
-  - cron: '0 8 * * *'  # UTC 08:00 = 北京时间 16:00
+  - cron: '0 0 * * *'  # UTC 00:00 = 北京时间 08:00
 ```
 
 ## 🔄 积分续费任务
