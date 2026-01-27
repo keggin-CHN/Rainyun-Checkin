@@ -6,7 +6,7 @@ on:
     workflow_dispatch:
     # 定时执行
     schedule:
-      - cron: '0 8 * * *'
+      - cron: '0 0 * * *'
 
 # 工作
 jobs:
