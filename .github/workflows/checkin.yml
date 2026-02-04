@@ -31,3 +31,6 @@ jobs:
         RAINYUN_USER: ${{ secrets.RAINYUN_USER }}
         RAINYUN_PWD: ${{ secrets.RAINYUN_PWD }}
         # TIMEOUT: ${{ secrets.TIMEOUT }}
+        # Telegram 通知配置
+        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+        TG_USER_ID: ${{ secrets.TG_USER_ID }}
