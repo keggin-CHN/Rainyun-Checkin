@@ -683,9 +683,34 @@ def telegram_bot(title: str, content: str) -> None:
             f"https://api.telegram.org/bot{push_config.get('TG_BOT_TOKEN')}/sendMessage"
         )
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    
+    # Telegram has a 4096 character limit for messages
+    # Truncate content if the full message exceeds this limit
+    full_message = f"{title}\n\n{content}"
+    max_length = 4096
+    
+    if len(full_message) > max_length:
+        # Keep title, first part of logs, and last part (most important info)
+        title_part = f"{title}\n\n"
+        available_for_content = max_length - len(title_part) - 50  # Reserve space for truncation notice
+        
+        if available_for_content > 200:
+            # Keep first 1/3 and last 2/3 of available space
+            first_part_len = available_for_content // 3
+            last_part_len = available_for_content - first_part_len
+            
+            truncation_notice = "\n...\n[日志过长，已省略中间部分]\n...\n"
+            first_part = content[:first_part_len]
+            last_part = content[-last_part_len:]
+            
+            full_message = f"{title_part}{first_part}{truncation_notice}{last_part}"
+        else:
+            # If very little space, just truncate from the end
+            full_message = full_message[:max_length - 20] + "\n...[日志已截断]"
+    
     payload = {
         "chat_id": str(push_config.get("TG_USER_ID")),
-        "text": f"{title}\n\n{content}",
+        "text": full_message,
         "disable_web_page_preview": "true",
     }
     proxies = None
