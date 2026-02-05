@@ -9,7 +9,13 @@ from typing import Optional
 
 from config import DEFAULT_RENEW_COST_7_DAYS
 from api_client import RainyunAPI, RainyunAPIError
-
+try:
+    from notify import send as notify_send
+    _notify_available = True
+except Exception as e:
+    _notify_available = False
+    def notify_send(title, content):
+        pass
 logger = logging.getLogger(__name__)
 
 
@@ -277,3 +283,28 @@ class ServerManager:
                 lines.append(f"   - {w}")
 
         return "\n".join(lines)
+
+    def check_renew_and_notify(self) -> dict:
+        """
+        检查服务器到期时间，自动续费，并发送通知
+
+        Returns:
+            check_and_renew 返回的结果字典
+        """
+        result = self.check_and_renew()
+        report = self.generate_report(result)
+
+        # 确定通知标题
+        if result["renewed"]:
+            title = f"🎉 雨云续费成功 - {len(result['renewed'])} 台服务器"
+        elif result["warnings"]:
+            title = "⚠️ 雨云服务器状态警告"
+        else:
+            title = "📊 雨云服务器状态报告"
+
+        # 发送通知
+        logger.info("正在发送续费通知...")
+        notify_send(title, report)
+        logger.info("续费通知已发送")
+
+        return result

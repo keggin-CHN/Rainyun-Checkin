@@ -25,32 +25,40 @@ jobs:
       - name: 执行积分续费
         env:
           RAINYUN_API_KEY: ${{ secrets.RAINYUN_API_KEY }}
-          RAINYUN_PRODUCT_ID: ${{ secrets.RAINYUN_PRODUCT_ID }}
+          RENEW_PRODUCT_IDS: ${{ secrets.RENEW_PRODUCT_IDS }}
+          AUTO_RENEW: ${{ secrets.AUTO_RENEW || 'true' }}
+          RENEW_THRESHOLD_DAYS: ${{ secrets.RENEW_THRESHOLD_DAYS || '7' }}
+          # 通知配置 (可选，按需配置)
+          PUSH_PLUS_TOKEN: ${{ secrets.PUSH_PLUS_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_USER_ID: ${{ secrets.TG_USER_ID }}
+          BARK_PUSH: ${{ secrets.BARK_PUSH }}
+          DD_BOT_TOKEN: ${{ secrets.DD_BOT_TOKEN }}
+          DD_BOT_SECRET: ${{ secrets.DD_BOT_SECRET }}
+          PUSH_KEY: ${{ secrets.PUSH_KEY }}
+          QYWX_KEY: ${{ secrets.QYWX_KEY }}
         run: |
           if [ -z "${RAINYUN_API_KEY}" ]; then
             echo "缺少 RAINYUN_API_KEY，请在仓库 Secrets 中配置"
             exit 1
           fi
-          if [ -z "${RAINYUN_PRODUCT_ID}" ]; then
-            echo "缺少 RAINYUN_PRODUCT_ID，请在仓库 Secrets 中配置"
-            exit 1
-          fi
           python - <<'PY'
           import os
           import sys
-          from api_client import RainyunAPI, RainyunAPIError
+          from server_manager import ServerManager
+
           api_key = os.environ["RAINYUN_API_KEY"]
-          product_id_raw = os.environ["RAINYUN_PRODUCT_ID"]
-          try:
-            product_id = int(product_id_raw)
-          except ValueError:
-            print(f"RAINYUN_PRODUCT_ID 必须是数字，当前为: {product_id_raw}")
-            sys.exit(1)
-          api = RainyunAPI(api_key)
-          try:
-            result = api.renew_server(product_id, days=7)
-          except RainyunAPIError as exc:
-            print(f"续费失败: {exc}")
-            sys.exit(1)
-          print("续费完成:", result)
+          manager = ServerManager(api_key)
+
+          # 执行检查续费并发送通知
+          result = manager.check_renew_and_notify()
+
+          # 输出摘要
+          print(f"检查完成: {len(result['servers'])} 台服务器")
+          if result["renewed"]:
+              print(f"✅ 已续费: {', '.join(result['renewed'])}")
+          if result["warnings"]:
+              print("⚠️ 警告:")
+              for w in result["warnings"]:
+                  print(f"  - {w}")
           PY
