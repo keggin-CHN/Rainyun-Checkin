@@ -692,21 +692,29 @@ def telegram_bot(title: str, content: str) -> None:
     if len(full_message) > max_length:
         # Keep title, first part of logs, and last part (most important info)
         title_part = f"{title}\n\n"
-        available_for_content = max_length - len(title_part) - 50  # Reserve space for truncation notice
+        truncation_notice = "\n...\n[日志过长，已省略中间部分]\n...\n"
         
-        if available_for_content > 200:
+        # Calculate available space: max_length - title - truncation notice
+        available_for_content = max_length - len(title_part) - len(truncation_notice)
+        
+        # Minimum content length threshold - below this, simpler truncation is used
+        MIN_CONTENT_LENGTH = 200
+        
+        if available_for_content > MIN_CONTENT_LENGTH:
             # Keep first 1/3 and last 2/3 of available space
+            # This preserves initial setup info and final results/errors
             first_part_len = available_for_content // 3
             last_part_len = available_for_content - first_part_len
             
-            truncation_notice = "\n...\n[日志过长，已省略中间部分]\n...\n"
-            first_part = content[:first_part_len]
-            last_part = content[-last_part_len:]
+            # Truncate content, ensuring we stay within bounds
+            first_part = content[:first_part_len].rstrip()
+            last_part = content[-last_part_len:].lstrip()
             
             full_message = f"{title_part}{first_part}{truncation_notice}{last_part}"
         else:
-            # If very little space, just truncate from the end
-            full_message = full_message[:max_length - 20] + "\n...[日志已截断]"
+            # If very little space available, use simple end truncation
+            truncation_suffix = "\n...[日志已截断]"
+            full_message = full_message[:max_length - len(truncation_suffix)] + truncation_suffix
     
     payload = {
         "chat_id": str(push_config.get("TG_USER_ID")),
