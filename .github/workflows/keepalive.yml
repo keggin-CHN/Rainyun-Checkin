@@ -4,6 +4,9 @@ on:
     - cron: '0 0 */14 * *'  # 每14天0点（UTC）运行一次
   workflow_dispatch:         # 允许手动触发
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   keepalive:
     runs-on: ubuntu-latest

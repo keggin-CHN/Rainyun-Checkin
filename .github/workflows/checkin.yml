@@ -9,6 +9,9 @@ on:
       - cron: '0 0 * * *'
 
 # 工作
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   checkin:
     runs-on: ubuntu-latest  # 使用 16GB 内存的 Linux

@@ -5,6 +5,7 @@ import os
 import random
 import re
 import shutil
+import sys
 import tempfile
 import time
 from dataclasses import dataclass
@@ -283,13 +284,31 @@ def process_captcha(ctx: RuntimeContext, retry_count: int = 0):
     except (TimeoutException, ValueError, CaptchaRetryableError) as e:
         # 修复：仅捕获预期异常（超时、解析失败、下载失败），其他程序错误直接抛出便于排查
         logger.error(f"验证码处理异常: {type(e).__name__} - {e}")
-        # 尝试刷新验证码重试
+        # 尝试刷新验证码重试（多选择器兜底）
         try:
-            reload_btn = ctx.driver.find_element(By.XPATH, '//*[@id="reload"]')
-            time.sleep(2)
-            reload_btn.click()
-            time.sleep(2)
-            return process_captcha(ctx, retry_count + 1)
+            reload_btn = None
+            for selector in [
+                (By.XPATH, '//*[@id="reload"]'),
+                (By.CSS_SELECTOR, '#reload'),
+                (By.CSS_SELECTOR, '.tc-fg-item-refresh'),
+                (By.CSS_SELECTOR, '[id*="reload"]'),
+            ]:
+                try:
+                    reload_btn = ctx.driver.find_element(*selector)
+                    if reload_btn and reload_btn.is_displayed():
+                        break
+                    reload_btn = None
+                except Exception:
+                    continue
+            if reload_btn:
+                logger.info("找到刷新按钮，点击刷新验证码")
+                time.sleep(2)
+                reload_btn.click()
+                time.sleep(3)
+                return process_captcha(ctx, retry_count + 1)
+            else:
+                logger.error("未找到任何刷新按钮，放弃重试")
+                return False
         except Exception as refresh_error:
             logger.error(f"无法刷新验证码，放弃重试: {refresh_error}")
             return False
@@ -370,6 +389,7 @@ def run():
     driver = None
     temp_dir = None
     debug = False
+    success = False  # 跟踪签到是否成功，用于设置退出码
     try:
         # 从环境变量读取配置
         timeout = int(os.environ.get("TIMEOUT", "15"))
@@ -441,6 +461,7 @@ def run():
             for pattern in already_signed_patterns:
                 if pattern in page_source:
                     logger.info(f"今日已签到（检测到：{pattern}），跳过签到流程")
+                    success = True  # 已签到也算成功
                     # 直接跳到获取积分信息
                     try:
                         points_raw = ctx.wait.until(EC.visibility_of_element_located((By.XPATH,
@@ -454,11 +475,27 @@ def run():
             raise Exception("未找到签到按钮，且未检测到已签到状态，可能页面结构已变更")
         
         logger.info("处理验证码")
-        ctx.driver.switch_to.frame("tcaptcha_iframe_dy")
-        if not process_captcha(ctx):
-            # 失败时尝试记录当前页面源码的关键部分，方便排查
-            logger.error(f"验证码重试次数过多，任务失败。当前页面状态: {ctx.driver.current_url}")
-            raise Exception("验证码识别重试次数过多，签到失败")
+        # 加固：使用显式等待 iframe 可用后再切换，避免 TimeoutException
+        try:
+            ctx.wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, 'tcaptcha_iframe_dy')))
+        except TimeoutException:
+            # iframe 未出现 → 可能已经签到了，或弹窗没触发
+            logger.warning("验证码 iframe 未出现，检查是否已签到")
+            already_signed_patterns = ['已领取', '已完成', '已签到', '明日再来']
+            page_source = ctx.driver.page_source
+            for pattern in already_signed_patterns:
+                if pattern in page_source:
+                    logger.info(f"今日已签到（检测到：{pattern}），无需验证码")
+                    success = True
+                    break
+            else:
+                logger.error("验证码 iframe 未出现且未检测到已签到状态")
+            if not success:
+                raise Exception("验证码 iframe 未出现，签到失败")
+        else:
+            if not process_captcha(ctx):
+                logger.error(f"验证码重试次数过多，任务失败。当前页面状态: {ctx.driver.current_url}")
+                raise Exception("验证码识别重试次数过多，签到失败")
         
         ctx.driver.switch_to.default_content()
         
@@ -475,6 +512,7 @@ def run():
             logger.warning(f"获取积分信息失败: {e}")
         
         logger.info("任务执行成功！")
+        success = True
         
     except Exception as e:
         logger.error(f"脚本执行异常终止: {e}")
@@ -500,6 +538,12 @@ def run():
         log_capture_string.close()
         if temp_dir and not debug:
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+        # 5. 设置退出码：成功=0，失败=1（让 GitHub Actions 真实反映结果）
+        if success:
+            sys.exit(0)
+        else:
+            sys.exit(1)
 
 
 if __name__ == "__main__":
