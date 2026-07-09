@@ -1,95 +1,159 @@
-# 🌧️ 雨云自动签到 (纯协议版)
+# 🌧️ 雨云自动签到 (GitHub Actions 版) v2.5
 
-> **v3.0** — 纯 HTTP 协议，无浏览器依赖，秒级完成
 
-雨云（Rainyun）每日自动签到工具，支持 **GitHub Actions 一键部署**，无需服务器。
 
-## ✨ 特性
+雨云（Rainyun）每日自动签到工具，支持 **GitHub Actions 一键部署**，无需服务器即可实现每日自动签到、积分累计。
 
-- ✅ **纯协议签到** — 直接调用雨云 API，无需 Selenium/验证码
-- ✅ **极速完成** — 3 个 HTTP 请求搞定（查积分 → 签到 → 再查积分）
-- ✅ **多平台通知** — Server酱、Bark、Telegram 等 20+ 渠道
-- ✅ **积分续费** — 可选自动续费游戏云服务器
-- ✅ **零依赖** — 仅需 `requests`，无需 Chrome/ddddocr/opencv
+## ✨ 功能特性
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| [X] 每日自动签到 | 🟢 支持 | 全自动登录 + 验证码识别 |
+| [X] 验证码识别 | 🟢 支持 | 使用 ddddocr 自动识别滑块验证码 |
+| [X] 多平台通知 | 🟢 支持 | Server酱、Bark 等通知渠道 |
+| [X] GitHub Actions 部署 | 🟢 支持 | 无需服务器，完全免费 |
+| [X] 积分续费任务 | 🟢 支持 | 每 7 天自动续费指定产品 |
+| [X] Docker 支持 | 🟢 支持 | 可选 Docker 容器化部署 |
+| [X] 随机延迟 | 🟢 支持 | 避免请求模式被识别 |
+| [x] 仓库自动保功能 | 🟢 支持 | 防止60天不动被关 |
+| 📊 积分查询 | 🟢 支持 | 显示当前积分和人民币价值 |
 
 ## 🚀 快速开始
 
-### 1. 获取 API 密钥
+### 1. Fork 仓库
+https://img.shields.io/badge/Fork-本仓库-4285F4?style=for-the-badge&logo=github](https://github.com/0x6768/Rainyun-Checkin/fork)
 
-前往 [雨云控制台](https://app.rainyun.com) → **用户中心** → **API 密钥**，复制你的密钥。
+点击上方按钮或访问 https://github.com/0x6768/Rainyun-Checkin/fork
 
-### 2. Fork 本仓库
+### 2. 配置环境变量
+1. 进入你 Fork 的仓库
+2. 点击 **Settings** → **Secrets and variables** → **Actions**
+3. 点击 **New repository secret** 添加以下必需环境变量：
 
-点击右上角 **Fork** 按钮。
+| 变量名 | 说明 | 获取方式 |
+|--------|------|----------|
+| `RAINYUN_USER` | 雨云登录邮箱 | 你的雨云账号邮箱 |
+| `RAINYUN_PWD` | 雨云登录密码 | 你的雨云账号密码 |
 
-### 3. 配置 Secrets
+### 3. 测试运行
+1. 点击 **Actions** 标签页
+2. 在左侧选择 **雨云自动签到** 工作流
+3. 点击 **Run workflow** 手动执行
+4. 等待约 1-2 分钟完成首次测试
 
-进入你 Fork 的仓库 → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
+### 4. 查看结果
+[X] 成功后，每天 **UTC 00:00**（北京时间 08:00）会自动执行，也支持手动触发
 
-| 变量名 | 说明 | 必填 |
-|--------|------|------|
-| `RAINYUN_API_KEY` | 雨云 API 密钥 | ✅ |
-| `TG_BOT_TOKEN` | Telegram Bot Token | ❌ |
-| `TG_USER_ID` | Telegram 用户 ID | ❌ |
+## ⚙️ 环境变量配置
 
-### 4. 手动测试
+### 📋 必需环境变量
+| 变量名 | 说明 | 示例值 | 是否保密 |
+|--------|------|--------|----------|
+| `RAINYUN_USER` | 雨云登录用户名 | `your_email@example.com` | [X] 是 |
+| `RAINYUN_PWD` | 雨云登录密码 | `your_password_123` | [X] 是 |
 
-**Actions** → **Checkin** → **Run workflow** → 等待完成
+### 🔧 可选环境变量
+| 变量名 | 说明 | 默认值 | 建议设置 |
+|--------|------|--------|----------|
+| `TIMEOUT` | 页面加载超时（秒） | `20` | 网络差可设为 `30` |
+> 如果需要设置`TIMEOUT`请前往checkin.yml文件取消对应的注释, 并在**Repository Secret**中添加`TIMEOUT`
 
-## ⚙️ 环境变量
-
-### 必填
-| 变量名 | 说明 |
-|--------|------|
-| `RAINYUN_API_KEY` | 雨云 API 密钥（后台获取） |
-
-### 可选
-| 变量名 | 说明 | 默认值 |
-|--------|------|--------|
-| `API_BASE_URL` | 雨云 API 地址 | `https://api.v2.rainyun.com` |
-| `POINTS_TO_CNY_RATE` | 积分兑人民币比例 | `2000` |
-| `REQUEST_TIMEOUT` | 请求超时（秒） | `15` |
-
-### 通知渠道（按需配置）
-详见 `.env.example`，支持：Bark、钉钉、飞书、Telegram、Server酱、PushPlus、企业微信 等。
+### 🔧 高级配置（通常无需修改）
+| 变量名 | 说明 | 默认值 | 适用场景 |
+|--------|------|--------|----------|
+| `CHROME_BIN` | Chrome 路径 | 自动检测 | 自定义 Chrome 路径 |
+| `CHROMEDRIVER_PATH` | ChromeDriver 路径 | `/usr/local/share/chromedriver-linux64/chromedriver` | ChromeDriver 路径问题 |
 
 ## 📁 项目结构
-
 ```
-├── .github/workflows/
-│   ├── checkin.yml       # 签到工作流（每天）
-│   ├── point_renew.yml   # 积分续费（每 7 天）
-│   └── keepalive.yml     # 仓库保活（每 14 天）
-├── checkin.py            # 签到主脚本（纯协议）
-├── api_client.py         # 雨云 API 客户端（续费用）
-├── server_manager.py     # 服务器管理（续费用）
-├── notify.py             # 通知推送模块
-├── config.py             # 配置读取
-└── requirements.txt      # 依赖（仅 requests）
+Rainyun-Checkin/
+├── .github/workflows/          # GitHub Actions 工作流
+│   ├── checkin.yml      # 自动签到工作流       
+│   ├── point_renew.yml  # 积分续费工作流
+│   └── keepalive.yml    # 仓库保活工作流
+├─ api_client.py      
+├─ config.py          
+├─ cookies.json       
+├─ notify.py          
+├─ rainyun.py         
+├─ README.md          
+├─ requirements.txt   
+├─ server_manager.py  
+└─ stealth.min.js     
 ```
 
-## 🔄 从旧版迁移
+## 🔍 故障排除
 
-旧版使用 `RAINYUN_USER` + `RAINYUN_PWD` + Selenium + 验证码识别。新版改用 `RAINYUN_API_KEY`：
+### 常见问题
+| 问题 | 解决方案 |
+|------|----------|
+| ❌ 登录失败 | 检查账号密码是否正确，网络是否正常 |
+| ❌ 验证码识别失败 | 增加 `TIMEOUT` 到 30 秒，网络问题可能导致图片下载失败 |
+| ❌ ChromeDriver 错误 | 确保 `CHROMEDRIVER_PATH` 正确，或使用默认值 |
 
-1. 获取 API 密钥：雨云后台 → 用户中心 → API 密钥
-2. 在 GitHub Secrets 中添加 `RAINYUN_API_KEY`
-3. 可以删除 `RAINYUN_USER` 和 `RAINYUN_PWD`
+### 查看日志
+1. GitHub Actions 执行页面的 **Run Workflow** 步骤
+2. 展开每个步骤查看详细输出
+3. 如有错误，截图 Issue 方便排查
 
-## ⏰ 自动执行时间
+## ⏰ GitHub Actions 自动触发条件
+- **自动签到（.github/workflows/checkin.yml）**：每天 UTC 00:00（北京时间 08:00）自动执行，支持手动触发
+- **积分续费（.github/workflows/point_renew.yml）**：按 cron `0 0 */7 * *` 规则在 UTC 00:00 自动执行（具体日期按 GitHub cron 规则计算），支持手动触发
+- **仓库保活（.github/workflows/keepalive.yml）**：按 cron `0 0 */14 * *` 规则在 UTC 00:00 自动执行（具体日期按 GitHub cron 规则计算），支持手动触发
+- **时区**：GitHub Actions 使用 UTC 时间
 
-| 工作流 | 频率 | 时间 |
-|--------|------|------|
-| 签到 | 每天 | UTC 00:00（北京 08:00） |
-| 积分续费 | 每 7 天 | UTC 00:00 |
-| 仓库保活 | 每 14 天 | UTC 00:00 |
+```yaml
+# 示例：每天北京时间 08:00 执行
+schedule:
+  - cron: '0 0 * * *'  # UTC 00:00 = 北京时间 08:00
+```
+
+## 🔄 积分续费任务
+
+仓库内置 `积分续费` 工作流，每 7 天自动执行一次积分续费请求。使用前请设置 `RAINYUN_API_KEY` 和 `RAINYUN_PRODUCT_ID`（服务器 ID）。
+
+```yaml
+schedule:
+  - cron: '0 0 */7 * *'  # UTC 0:00 = 北京时间 8:00，每 7 天执行一次
+```
+
+需要的 Secrets：
+- `RAINYUN_API_KEY`: 雨云后台 API 密钥
+- `RAINYUN_PRODUCT_ID`: 续费服务器 ID（雨云后台产品列表中可查看，或在产品详情页 URL 中获取）
+
+## 🔄 更新脚本
+```bash
+# 同步上游更新
+git remote add upstream https://github.com/0x6768/Rainyun-Checkin.git
+git fetch upstream
+git merge upstream/main
+```
+
+## 🤝 贡献指南
+欢迎提交 Issue 和 Pull Request！
+
+1. Fork 本仓库
+2. 创建功能分支：`git checkout -b feature/your-feature`
+3. 提交更改：`git commit -m 'Add some feature'`
+4. 推送到分支：`git push origin feature/your-feature`
+5. 提交 Pull Request
 
 ## 📄 许可证
-
-MIT License
+本项目采用 MIT 许可证 - 查看 LICENSE 文件了解详情
 
 ## 🙏 致谢
+本项目基于以下优秀项目二次开发：
 
-- 原版: [SerendipityR-2022/Rainyun-Qiandao](https://github.com/SerendipityR-2022/Rainyun-Qiandao)
-- 改进: [fatekey](https://github.com/fatekey/Rainyun-Qiandao) · [Jielumoon](https://github.com/Jielumoon/Rainyun-Qiandao) · [0x6768](https://github.com/0x6768/Rainyun-Checkin)
-- API 参考: [xingkongmcqwq/rainyun-api](https://github.com/xingkongmcqwq/rainyun-api)
+| 版本 | 作者 | 仓库 | 主要贡献 |
+|------|------|------|----------|
+| 原版 | SerendipityR | https://github.com/SerendipityR-2022/Rainyun-Qiandao | 初始 Python 实现 |
+| 二改 | fatekey | https://github.com/fatekey/Rainyun-Qiandao | Docker 化改造 |
+| 三改 | Jielumoon | https://github.com/Jielumoon/Rainyun-Qiandao | 稳定性优化 |
+| 四改 | 0x6768 | https://github.com/0x6768/Rainyun-Checkin | GitHub Actions 集成 移除了服务器端管理功能 |
+
+## ⭐ 支持项目
+如果这个项目对你有帮助，请点个 Star ⭐ 支持一下！
+
+---
+
+**免责声明**：本项目仅供学习交流使用，请遵守雨云服务条款，合理使用自动签到功能。

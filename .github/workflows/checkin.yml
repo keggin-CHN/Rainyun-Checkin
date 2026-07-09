@@ -1,10 +1,14 @@
+# 文件: .github/workflows/ci.yml
 name: Checkin
 
+# 触发条件
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: '0 0 * * *'   # 每天 UTC 00:00 = 北京 08:00
+    workflow_dispatch:
+    # 定时执行
+    schedule:
+      - cron: '0 0 * * *'
 
+# 工作
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
@@ -12,43 +16,44 @@ jobs:
   checkin-account1:
     runs-on: ubuntu-latest
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
+    - name: 检出代码
+      uses: actions/checkout@v4
 
-      - name: 设置 Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
+    - name: 设置 Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
 
-      - name: 安装依赖
-        run: pip install -r requirements.txt
+    - name: 安装依赖
+      run: pip install -r requirements.txt
 
-      - name: 运行签到 (账号1)
-        run: python -u checkin.py
-        env:
-          RAINYUN_API_KEY: ${{ secrets.RAINYUN_API_KEY }}
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_USER_ID: ${{ secrets.TG_USER_ID }}
+    - name: 运行 (账号1)
+      run: python -u rainyun.py
+      env:
+        RAINYUN_USER: ${{ secrets.RAINYUN_USER }}
+        RAINYUN_PWD: ${{ secrets.RAINYUN_PWD }}
+        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+        TG_USER_ID: ${{ secrets.TG_USER_ID }}
 
   checkin-account2:
-    if: ${{ secrets.RAINYUN_API_KEY_2 != '' }}
     runs-on: ubuntu-latest
     needs: checkin-account1
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
+    - name: 检出代码
+      uses: actions/checkout@v4
 
-      - name: 设置 Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
+    - name: 设置 Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
 
-      - name: 安装依赖
-        run: pip install -r requirements.txt
+    - name: 安装依赖
+      run: pip install -r requirements.txt
 
-      - name: 运行签到 (账号2)
-        run: python -u checkin.py
-        env:
-          RAINYUN_API_KEY: ${{ secrets.RAINYUN_API_KEY_2 }}
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_USER_ID: ${{ secrets.TG_USER_ID }}
+    - name: 运行 (账号2)
+      run: python -u rainyun.py
+      env:
+        RAINYUN_USER: ${{ secrets.RAINYUN_USER_2 }}
+        RAINYUN_PWD: ${{ secrets.RAINYUN_PWD_2 }}
+        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+        TG_USER_ID: ${{ secrets.TG_USER_ID }}
