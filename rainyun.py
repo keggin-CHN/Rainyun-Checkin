@@ -212,7 +212,26 @@ def init_selenium(debug: bool, linux: bool) -> WebDriver:
         driver = webdriver.Chrome(service=Service("chromedriver.exe"), options=ops)
     driver.set_window_size(1920, 1080)
     logger.info(f"浏览器窗口尺寸: {driver.get_window_size()}")
+    # 采集浏览器 console 错误，便于定位前端交互问题
+    try:
+        from selenium.webdriver.common.log import LogEntry  # noqa: F401
+    except Exception:
+        pass
     return driver
+
+
+def log_browser_console_errors(driver: WebDriver, limit: int = 5) -> None:
+    """输出浏览器 console 中最近的错误日志（用于诊断前端交互问题）。"""
+    try:
+        logs = driver.get_log("browser")
+        errors = [e for e in logs if e.get("level") == "SEVERE"]
+        for entry in errors[-limit:]:
+            msg = (entry.get("message") or "")[:300]
+            logger.info(f"[console-error] {msg}")
+        if not errors:
+            logger.info("[console-error] 无 SEVERE 级别日志")
+    except Exception as e:
+        logger.info(f"[console-error] 读取失败: {type(e).__name__}")
 
 
 def download_image(url: str, output_path: str) -> bool:
@@ -790,6 +809,14 @@ def click_daily_sign_reward_button(driver: WebDriver, timeout: int = 10) -> bool
     reward_text = re.sub(r"\s+", " ", (reward_btn.get_attribute("innerText") or reward_btn.text or "").strip())
     driver.execute_script("arguments[0].click();", reward_btn)
     logger.info(f"已点击每日签到弹窗奖励按钮: [{reward_text}]")
+    # 诊断：点击后弹窗文本（若变为“签到中…”说明 Vue 处理器已执行）
+    try:
+        import time as _t
+        _t.sleep(1.5)
+        log_sign_modal_diagnostic(driver, "点击奖励按钮后")
+        log_browser_console_errors(reward_btn.parent)
+    except Exception:
+        pass
     return True
 
 
