@@ -579,6 +579,27 @@ def find_daily_sign_claim_button(ctx: RuntimeContext, timeout: int):
     return wait.until(_locate)
 
 
+def get_daily_sign_button_diagnostic(driver: WebDriver) -> str:
+    """返回有限的签到按钮候选诊断，供定位失败日志使用。"""
+    details = []
+    for key in ("SIGN_IN_BTN", "SIGN_IN_BTN_LEGACY", "SIGN_IN_BTN_FALLBACK"):
+        try:
+            elements = driver.find_elements(By.XPATH, XPATH_CONFIG[key])
+            for element in elements[:2]:
+                try:
+                    text = re.sub(r"\s+", " ", (element.get_attribute("innerText") or element.text or "")).strip()
+                    details.append(
+                        f"{key}:tag={element.tag_name}, visible={element.is_displayed()}, enabled={element.is_enabled()}, text=[{text[:100]}]"
+                    )
+                except Exception as e:
+                    details.append(f"{key}: candidate inspection failed ({type(e).__name__})")
+            if not elements:
+                details.append(f"{key}: no matches")
+        except Exception as e:
+            details.append(f"{key}: XPath error ({type(e).__name__})")
+    return " | ".join(details)
+
+
 def switch_to_visible_captcha_frame(driver: WebDriver, timeout: int = 10):
     """切换到真正显示且有尺寸的腾讯验证码 iframe，跳过页面残留的隐藏 iframe。"""
     driver.switch_to.default_content()
@@ -761,7 +782,8 @@ def run():
                 return
             header_text = get_daily_sign_header_text(ctx.driver)
             card_text = get_daily_sign_card_text(ctx.driver)
-            logger.error(f"每日签到按钮定位失败诊断: header_text=[{header_text}], card_text=[{card_text[:180]}]")
+            button_details = get_daily_sign_button_diagnostic(ctx.driver)
+            logger.error(f"每日签到按钮定位失败诊断: header_text=[{header_text}], card_text=[{card_text[:180]}], candidates=[{button_details}]")
             raise Exception("未找到每日签到领取按钮，且每日签到模块未显示已签到状态")
 
         logger.info("处理验证码")
