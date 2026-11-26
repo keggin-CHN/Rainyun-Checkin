@@ -650,14 +650,19 @@ def get_daily_sign_button_diagnostic(driver: WebDriver) -> str:
 
 
 def switch_to_visible_captcha_frame(driver: WebDriver, timeout: int = 10):
-    """切换到真正显示且有尺寸的腾讯验证码 iframe，跳过页面残留的隐藏 iframe。"""
+    """切换到有尺寸的腾讯验证码 iframe。
+
+    注意：headless 布局下弹层可能整体位于视口外，is_displayed() 会误报 False，
+    因此只要求 iframe 存在且宽高大于 0，不再依赖 is_displayed()。
+    页面残留的隐藏 iframe（宽高为 0）依然会被排除。
+    """
     driver.switch_to.default_content()
 
     def _visible_frame(d):
         for frame in d.find_elements(By.XPATH, CAPTCHA_IFRAME_XPATH):
             try:
                 size = frame.size or {}
-                if frame.is_displayed() and size.get("width", 0) > 0 and size.get("height", 0) > 0:
+                if size.get("width", 0) > 0 and size.get("height", 0) > 0:
                     return frame
             except Exception:
                 continue
