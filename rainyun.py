@@ -681,6 +681,41 @@ def switch_to_new_window_if_opened(driver: WebDriver, existing_handles: set[str]
     return True
 
 
+def log_sign_modal_diagnostic(driver: WebDriver, stage: str) -> None:
+    """输出弹窗/奖励按钮状态诊断，帮助定位新版签到弹窗交互问题。"""
+    try:
+        panels = driver.find_elements(By.XPATH, XPATH_CONFIG["DAILY_SIGN_MODAL"])
+        logger.info(f"[{stage}] 每日签到弹窗面板数量: {len(panels)}")
+        for i, panel in enumerate(panels[:2]):
+            try:
+                logger.info(
+                    f"[{stage}] 面板{i}: displayed={panel.is_displayed()}, "
+                    f"text=[{re.sub(chr(10), ' ', (panel.get_attribute('innerText') or '')[:120])}]"
+                )
+            except Exception as e:
+                logger.warning(f"[{stage}] 面板{i} 读取失败: {type(e).__name__}")
+        rewards = driver.find_elements(By.XPATH, DAILY_SIGN_REWARD_BTN_XPATH)
+        logger.info(f"[{stage}] 奖励按钮数量: {len(rewards)}")
+        for btn in rewards[:3]:
+            try:
+                styles = driver.execute_script(
+                    """let n=arguments[0], out=[];
+                    for(let i=0;n&&i<6;i++,n=n.parentElement){
+                      let s=getComputedStyle(n),r=n.getBoundingClientRect();
+                      out.push(n.tagName.toLowerCase()+'.'+String(n.className||'').trim().replace(/\\s+/g,'.')+
+                      '{display:'+s.display+',visibility:'+s.visibility+',opacity:'+s.opacity+
+                      ',rect:'+Math.round(r.width)+'x'+Math.round(r.height)+'}');
+                    }
+                    return out.join(' <- ');""",
+                    btn,
+                )
+                logger.info(f"[{stage}] 奖励按钮: displayed={btn.is_displayed()}, enabled={btn.is_enabled()}, styles=[{styles}]")
+            except Exception as e:
+                logger.warning(f"[{stage}] 奖励按钮读取失败: {type(e).__name__}")
+    except Exception as e:
+        logger.warning(f"[{stage}] 弹窗诊断失败: {type(e).__name__}")
+
+
 def click_daily_sign_reward_button(driver: WebDriver, timeout: int = 10) -> bool:
     """在新版“每日签到”弹窗中点击奖励按钮（默认第一个：500 积分）。
 
@@ -701,6 +736,7 @@ def click_daily_sign_reward_button(driver: WebDriver, timeout: int = 10) -> bool
     try:
         reward_btn = wait.until(_find)
     except TimeoutException:
+        log_sign_modal_diagnostic(driver, "奖励按钮等待超时")
         return False
     reward_text = re.sub(r"\s+", " ", (reward_btn.get_attribute("innerText") or reward_btn.text or "").strip())
     try:
@@ -875,6 +911,7 @@ def run():
         logger.info("处理验证码")
         try:
             switch_to_new_window_if_opened(ctx.driver, window_handles_before_click)
+            log_sign_modal_diagnostic(ctx.driver, "点击卡片按钮后")
             try:
                 switch_to_visible_captcha_frame(ctx.driver, timeout=max(8, timeout))
             except TimeoutException:
