@@ -70,6 +70,26 @@ class RuntimeContext:
     temp_dir: str
 
 
+XPATH_CONFIG = {
+    "LOGIN_BTN": "//button[@type='submit' and contains(., '登') and contains(., '录')]",
+    "LOGIN_BTN_FALLBACK": '//*[@id="app"]/div[1]/div[1]/div/div[2]/fade/div/div/span/form/button',
+    # “每日签到”卡片根节点
+    "SIGN_IN_CARD": "//div[contains(@class, 'card') and .//div[contains(@class, 'card-header') and .//span[contains(normalize-space(.), '每日签到')]]]",
+    # “每日签到”卡片头部（只在该模块内读取状态文案，避免其他任务卡片的“已完成”导致误判）
+    "SIGN_IN_HEADER": "//div[contains(@class, 'card-header') and .//span[contains(normalize-space(.), '每日签到')]]",
+    "SIGN_IN_HEADER_FALLBACK": "//span[contains(normalize-space(.), '每日签到')]/ancestor::div[1]",
+    # “每日签到”按钮：兼容 a/button 标签与常见文案变体
+    "SIGN_IN_BTN": "//div[contains(@class, 'card-header') and .//span[contains(normalize-space(.), '每日签到')]]//*[self::a or self::button][contains(normalize-space(.), '领取奖励') or contains(normalize-space(.), '去完成') or contains(normalize-space(.), '去签到')]",
+    "SIGN_IN_BTN_FALLBACK": "//span[contains(normalize-space(.), '每日签到')]/ancestor::div[1]//*[self::a or self::button][contains(normalize-space(.), '领取奖励') or contains(normalize-space(.), '去完成') or contains(normalize-space(.), '去签到')]",
+    "POINTS_HEADER": '//*[@id="app"]/div[1]/div[3]/div[2]/div/div/div[2]/div[1]/div[1]/div/p/div/h3',
+}
+
+DAILY_SIGN_CLAIM_TEXTS = ("领取奖励", "去完成", "去签到")
+DAILY_SIGN_CLAIM_XPATH = "//*[self::a or self::button][contains(normalize-space(.), '领取奖励') or contains(normalize-space(.), '去完成') or contains(normalize-space(.), '去签到')]"
+# 只在“每日签到”模块范围内匹配这些完成态文案，绝不扫描整个 page_source
+DAILY_SIGN_DONE_PATTERNS = ("已完成", "已领取", "已签到", "明日再来")
+
+
 def build_app_url(path: str) -> str:
     return f"{APP_BASE_URL}/{path.lstrip('/')}"
 
@@ -87,45 +107,83 @@ def clear_temp_dir(temp_dir: str) -> None:
             os.remove(file_path)
 
 
+def dismiss_modal_confirm(driver: WebDriver, wait_seconds: float = 2.0) -> bool:
+    """关闭页面可能弹出的确认弹窗（若有）"""
+    try:
+        modal_wait = WebDriverWait(driver, wait_seconds, poll_frequency=0.3)
+        confirm = modal_wait.until(
+            EC.element_to_be_clickable(
+                (By.XPATH, "//footer[contains(@id,'modal') and contains(@id,'footer')]//button[contains(normalize-space(.), '确认')]")
+            )
+        )
+        try:
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", confirm)
+        except Exception:
+            pass
+        time.sleep(0.2)
+        confirm.click()
+        logger.info("已关闭页面确认弹窗")
+        time.sleep(0.5)
+        return True
+    except Exception:
+        return False
+
+
 def do_login(ctx: RuntimeContext, user: str, pwd: str) -> bool:
-    """执行登录流程"""
+    """执行登录流程（支持失败自动重试）"""
     logger.info("发起登录请求")
     ctx.driver.get(build_app_url("/auth/login"))
-    try:
-        username = ctx.wait.until(EC.visibility_of_element_located((By.NAME, 'login-field')))
-        password = ctx.wait.until(EC.visibility_of_element_located((By.NAME, 'login-password')))
-        login_button = ctx.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                                                    '//*[@id="app"]/div[1]/div[1]/div/div[2]/fade/div/div/span/form/button')))
-        username.send_keys(user)
-        password.send_keys(pwd)
-        login_button.click()
-    except TimeoutException:
-        logger.error("页面加载超时，请尝试延长超时时间或切换到国内网络环境！")
-        return False
-    try:
-        login_captcha = ctx.wait.until(EC.visibility_of_element_located((By.ID, 'tcaptcha_iframe_dy')))
-        logger.warning("触发验证码！")
-        ctx.driver.switch_to.frame("tcaptcha_iframe_dy")
-        if not process_captcha(ctx):
-            logger.error("登录验证码识别失败")
+    for attempt in range(1, 3):
+        try:
+            username = ctx.wait.until(EC.visibility_of_element_located((By.NAME, 'login-field')))
+            password = ctx.wait.until(EC.visibility_of_element_located((By.NAME, 'login-password')))
+            try:
+                login_button = ctx.wait.until(EC.visibility_of_element_located((By.XPATH, XPATH_CONFIG["LOGIN_BTN"])))
+            except TimeoutException:
+                login_button = ctx.wait.until(EC.visibility_of_element_located((By.XPATH, XPATH_CONFIG["LOGIN_BTN_FALLBACK"])))
+            username.clear()
+            password.clear()
+            username.send_keys(user)
+            password.send_keys(pwd)
+            login_button.click()
+        except TimeoutException:
+            logger.error("页面加载超时，请尝试延长超时时间或切换到国内网络环境！")
             return False
-    except TimeoutException:
-        logger.info("未触发验证码")
-    time.sleep(2)  # 给页面一点点缓冲时间
-    ctx.driver.switch_to.default_content()
-    try:
-        # 使用显式等待检测登录是否成功（通过判断 URL 变化）
-        ctx.wait.until(EC.url_contains("dashboard"))
-        logger.info("登录成功！")
-        return True
-    except TimeoutException:
-        logger.error(f"登录超时或失败！当前 URL: {ctx.driver.current_url}")
-        return False
+
+        try:
+            captcha_wait = WebDriverWait(ctx.driver, 8 if attempt > 1 else 15, poll_frequency=0.5)
+            captcha_wait.until(EC.visibility_of_element_located((By.ID, 'tcaptcha_iframe_dy')))
+            logger.warning("触发验证码！")
+            ctx.driver.switch_to.frame("tcaptcha_iframe_dy")
+            if not process_captcha(ctx):
+                logger.error("登录验证码识别失败")
+                return False
+        except TimeoutException:
+            logger.info("未触发验证码")
+        finally:
+            ctx.driver.switch_to.default_content()
+
+        time.sleep(2)  # 给页面一点点缓冲时间
+        try:
+            redirect_wait = WebDriverWait(ctx.driver, 20, poll_frequency=0.5)
+            redirect_wait.until(EC.url_contains("dashboard"))
+            logger.info("登录成功！")
+            dismiss_modal_confirm(ctx.driver, 2.0)
+            return True
+        except TimeoutException:
+            current_url = ctx.driver.current_url
+            if attempt < 2 and "/auth/login" in current_url:
+                logger.warning(f"第 {attempt} 次登录后仍停留在登录页，自动重试一次。当前 URL: {current_url}")
+                continue
+            logger.error(f"登录超时或失败！当前 URL: {current_url}")
+            return False
+    return False
 
 
 def init_selenium(debug: bool, linux: bool) -> WebDriver:
     ops = Options()
     ops.add_argument("--no-sandbox")
+    ops.add_argument("--window-size=1920,1080")
     if debug:
         ops.add_experimental_option("detach", True)
     if linux:
@@ -384,6 +442,153 @@ def compute_similarity(img1_path, img2_path):
     return similarity, len(good)
 
 
+def open_reward_page(ctx: RuntimeContext, timeout: int) -> bool:
+    """打开赚取积分页：按“站内菜单点击 -> 直接 URL -> JS 跳转”顺序尝试"""
+    reward_path = "/account/reward/earn"
+    target_url = build_app_url(reward_path)
+
+    def _wait_url(wait_sec: int = 8) -> bool:
+        try:
+            return bool(WebDriverWait(ctx.driver, wait_sec, poll_frequency=0.5).until(EC.url_contains(reward_path)))
+        except TimeoutException:
+            return False
+
+    # 1. 优先尝试点击站内菜单跳转（避免 SPA 完整重载）
+    try:
+        links = ctx.driver.find_elements(By.XPATH, "//a[contains(@href, '/account/reward/earn')]")
+        for link in links:
+            try:
+                if link.is_displayed() and link.is_enabled():
+                    link.click()
+                    if _wait_url(8):
+                        logger.info("通过站内菜单进入赚取积分页")
+                        dismiss_modal_confirm(ctx.driver, 2.0)
+                        return True
+            except Exception:
+                try:
+                    ctx.driver.execute_script("arguments[0].click();", link)
+                    if _wait_url(8):
+                        logger.info("通过站内菜单(JS)进入赚取积分页")
+                        dismiss_modal_confirm(ctx.driver, 2.0)
+                        return True
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    # 2. 直接 URL 访问
+    ctx.driver.get(target_url)
+    if _wait_url(max(8, timeout)):
+        logger.info("通过直接 URL 进入赚取积分页")
+        dismiss_modal_confirm(ctx.driver, 2.0)
+        return True
+
+    # 3. JS 兜底跳转
+    fallback_url = f"{target_url}?_ts={int(time.time() * 1000)}"
+    try:
+        ctx.driver.execute_script("window.location.assign(arguments[0]);", fallback_url)
+    except Exception:
+        ctx.driver.get(fallback_url)
+    ok = _wait_url(max(10, timeout))
+    dismiss_modal_confirm(ctx.driver, 2.0)
+    return ok
+
+
+def get_daily_sign_header_text(driver: WebDriver) -> str:
+    """只读取“每日签到”卡片头部/容器内的可见文本，绝不读取全页 page_source"""
+    for xpath in (XPATH_CONFIG["SIGN_IN_HEADER"], XPATH_CONFIG["SIGN_IN_HEADER_FALLBACK"]):
+        try:
+            elements = driver.find_elements(By.XPATH, xpath)
+            if elements:
+                raw_text = (elements[0].get_attribute("innerText") or elements[0].text or "").strip()
+                text = re.sub(r"\s+", " ", raw_text).strip()
+                if text:
+                    return text
+        except Exception:
+            continue
+    return ""
+
+
+def get_daily_sign_card_text(driver: WebDriver) -> str:
+    """读取“每日签到”整个卡片的可见文本（用于诊断）"""
+    try:
+        elements = driver.find_elements(By.XPATH, XPATH_CONFIG["SIGN_IN_CARD"])
+        if elements:
+            raw_text = (elements[0].get_attribute("innerText") or elements[0].text or "").strip()
+            return re.sub(r"\s+", " ", raw_text).strip()
+    except Exception:
+        pass
+    return ""
+
+
+def detect_daily_sign_done_pattern(driver: WebDriver) -> str | None:
+    """仅在“每日签到”模块头部文本中检测完成态关键字"""
+    header_text = get_daily_sign_header_text(driver)
+    for pattern in DAILY_SIGN_DONE_PATTERNS:
+        if pattern in header_text:
+            return pattern
+    return None
+
+
+def wait_daily_sign_done_pattern(driver: WebDriver, timeout: int = 12) -> str | None:
+    """等待“每日签到”模块状态变为已完成/已领取"""
+    wait = WebDriverWait(driver, timeout, poll_frequency=0.5)
+    try:
+        return wait.until(lambda d: detect_daily_sign_done_pattern(d) or False)
+    except TimeoutException:
+        return None
+
+
+def wait_daily_sign_section_ready(ctx: RuntimeContext, timeout: int) -> bool:
+    """等待“每日签到”卡片渲染就绪"""
+    wait_sec = max(25, timeout)
+    wait = WebDriverWait(ctx.driver, wait_sec, poll_frequency=0.5)
+
+    def _probe(d: WebDriver) -> bool:
+        if d.find_elements(By.XPATH, XPATH_CONFIG["SIGN_IN_HEADER"]):
+            return True
+        if d.find_elements(By.XPATH, XPATH_CONFIG["SIGN_IN_CARD"]):
+            return True
+        return bool(d.find_elements(By.XPATH, "//span[contains(normalize-space(.), '每日签到')]"))
+
+    try:
+        return bool(wait.until(_probe))
+    except TimeoutException:
+        return False
+
+
+def find_daily_sign_claim_button(ctx: RuntimeContext, timeout: int):
+    """在“每日签到”模块内寻找可点击的领取按钮"""
+    wait = WebDriverWait(ctx.driver, timeout, poll_frequency=0.5)
+
+    def _locate(d: WebDriver):
+        for xpath in (XPATH_CONFIG["SIGN_IN_BTN"], XPATH_CONFIG["SIGN_IN_BTN_FALLBACK"]):
+            elems = d.find_elements(By.XPATH, xpath)
+            for el in elems:
+                try:
+                    if el.is_displayed() and el.is_enabled():
+                        return el
+                except Exception:
+                    continue
+            if elems:
+                return elems[0]
+        return False
+
+    return wait.until(_locate)
+
+
+def read_current_points(ctx: RuntimeContext) -> int | None:
+    """读取页面显示的当前剩余积分"""
+    try:
+        points_raw = ctx.wait.until(
+            EC.visibility_of_element_located((By.XPATH, XPATH_CONFIG["POINTS_HEADER"]))
+        ).get_attribute("textContent")
+        return int("".join(re.findall(r"\d+", points_raw)))
+    except Exception as e:
+        logger.warning(f"获取积分信息失败: {e}")
+        return None
+
+
 def run():
     ctx = None
     driver = None
@@ -445,72 +650,80 @@ def run():
             return
 
         logger.info("正在转到赚取积分页")
-        ctx.driver.get(build_app_url("/account/reward/earn"))
+        open_reward_page(ctx, timeout)
 
-        # 检查签到状态：先找"领取奖励"按钮，找不到就检查是否已签到
+        if not wait_daily_sign_section_ready(ctx, timeout):
+            logger.warning(f"赚取积分页首次加载未检测到每日签到模块，尝试刷新重试 (URL: {ctx.driver.current_url})")
+            ctx.driver.refresh()
+            dismiss_modal_confirm(ctx.driver, 2.0)
+            if not wait_daily_sign_section_ready(ctx, timeout):
+                raise Exception(f"赚取积分页加载超时：未找到每日签到模块 (URL: {ctx.driver.current_url})")
+
+        start_points = read_current_points(ctx)
+        if start_points is not None:
+            logger.info(f"签到前积分: {start_points} | 约为 {start_points / POINTS_TO_CNY_RATE:.2f} 元")
+
+        header_text = get_daily_sign_header_text(ctx.driver)
+        logger.info(f"每日签到模块当前文案: [{header_text}]")
+
+        # 1. 先检查“每日签到”模块内部是否已经显示完成状态
+        done_pattern = detect_daily_sign_done_pattern(ctx.driver)
+        if done_pattern:
+            logger.info(f"今日已签到（每日签到模块检测到：{done_pattern}），跳过签到流程")
+            success = True
+            return
+
+        # 2. 寻找并点击“每日签到”模块内的领取按钮
         try:
-            # 使用显示等待寻找按钮
-            earn = ctx.wait.until(EC.presence_of_element_located((By.XPATH,
-                                       "//span[contains(text(), '每日签到')]/ancestor::div[1]//a[contains(text(), '领取奖励')]")))
-            logger.info("点击赚取积分")
-            earn.click()
+            earn = find_daily_sign_claim_button(ctx, timeout)
+            btn_text = re.sub(r"\s+", " ", (earn.get_attribute("innerText") or earn.text or "").strip())
+            logger.info(f"点击每日签到按钮: [{btn_text}]")
+            try:
+                earn.click()
+            except Exception:
+                ctx.driver.execute_script("arguments[0].click();", earn)
         except TimeoutException:
-            # 检查是否已经签到（按钮可能显示"已领取"、"已完成"等）
-            already_signed_patterns = ['已领取', '已完成', '已签到', '明日再来']
-            page_source = ctx.driver.page_source
-            for pattern in already_signed_patterns:
-                if pattern in page_source:
-                    logger.info(f"今日已签到（检测到：{pattern}），跳过签到流程")
-                    success = True  # 已签到也算成功
-                    # 直接跳到获取积分信息
-                    try:
-                        points_raw = ctx.wait.until(EC.visibility_of_element_located((By.XPATH,
-                            '//*[@id="app"]/div[1]/div[3]/div[2]/div/div/div[2]/div[1]/div[1]/div/p/div/h3'))).get_attribute("textContent")
-                        current_points = int(''.join(re.findall(r'\d+', points_raw)))
-                        logger.info(f"当前剩余积分: {current_points} | 约为 {current_points / POINTS_TO_CNY_RATE:.2f} 元")
-                    except Exception:
-                        logger.info("无法获取当前积分信息")
-                    return
-            # 如果既没找到领取按钮，也没检测到已签到，说明页面结构可能变了
-            raise Exception("未找到签到按钮，且未检测到已签到状态，可能页面结构已变更")
-        
+            done_pattern = detect_daily_sign_done_pattern(ctx.driver)
+            if done_pattern:
+                logger.info(f"今日已签到（每日签到模块检测到：{done_pattern}），跳过签到流程")
+                success = True
+                return
+            header_text = get_daily_sign_header_text(ctx.driver)
+            card_text = get_daily_sign_card_text(ctx.driver)
+            logger.error(f"每日签到按钮定位失败诊断: header_text=[{header_text}], card_text=[{card_text[:180]}]")
+            raise Exception("未找到每日签到领取按钮，且每日签到模块未显示已签到状态")
+
         logger.info("处理验证码")
-        # 加固：使用显式等待 iframe 可用后再切换，避免 TimeoutException
         try:
             ctx.wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, 'tcaptcha_iframe_dy')))
-        except TimeoutException:
-            # iframe 未出现 → 可能已经签到了，或弹窗没触发
-            logger.warning("验证码 iframe 未出现，检查是否已签到")
-            already_signed_patterns = ['已领取', '已完成', '已签到', '明日再来']
-            page_source = ctx.driver.page_source
-            for pattern in already_signed_patterns:
-                if pattern in page_source:
-                    logger.info(f"今日已签到（检测到：{pattern}），无需验证码")
-                    success = True
-                    break
-            else:
-                logger.error("验证码 iframe 未出现且未检测到已签到状态")
-            if not success:
-                raise Exception("验证码 iframe 未出现，签到失败")
-        else:
             if not process_captcha(ctx):
                 logger.error(f"验证码重试次数过多，任务失败。当前页面状态: {ctx.driver.current_url}")
                 raise Exception("验证码识别重试次数过多，签到失败")
-        
-        ctx.driver.switch_to.default_content()
-        
-        # 等待积分显示
-        time.sleep(3)
-        
-        try:
-            points_raw = ctx.wait.until(EC.visibility_of_element_located((By.XPATH,
-                                     '//*[@id="app"]/div[1]/div[3]/div[2]/div/div/div[2]/div[1]/div[1]/div/p/div/h3'))).get_attribute(
-                "textContent")
-            current_points = int(''.join(re.findall(r'\d+', points_raw)))
-            logger.info(f"当前剩余积分: {current_points} | 约为 {current_points / POINTS_TO_CNY_RATE:.2f} 元")
-        except Exception as e:
-            logger.warning(f"获取积分信息失败: {e}")
-        
+        except TimeoutException:
+            logger.warning("验证码 iframe 未出现，检查每日签到模块状态")
+        finally:
+            ctx.driver.switch_to.default_content()
+
+        # 3. 验证码处理后，确认“每日签到”模块确实变为完成状态（或积分增加）
+        done_pattern = wait_daily_sign_done_pattern(ctx.driver, timeout=12)
+        time.sleep(2)
+        current_points = read_current_points(ctx)
+        if current_points is not None:
+            earned_info = ""
+            if start_points is not None and current_points >= start_points:
+                earned_info = f" (本次获得 +{current_points - start_points} 积分)"
+            logger.info(f"当前剩余积分: {current_points}{earned_info} | 约为 {current_points / POINTS_TO_CNY_RATE:.2f} 元")
+
+        if not done_pattern:
+            header_text = get_daily_sign_header_text(ctx.driver)
+            if start_points is not None and current_points is not None and current_points > start_points:
+                logger.info("检测到积分已增加，确认签到成功！")
+            else:
+                logger.error(f"签到后状态校验未通过，每日签到模块文案仍为: [{header_text}]")
+                raise Exception(f"验证码处理后未检测到每日签到完成状态 (当前模块文案: {header_text})")
+        else:
+            logger.info(f"每日签到完成确认（模块状态：{done_pattern}）")
+
         logger.info("任务执行成功！")
         success = True
         
