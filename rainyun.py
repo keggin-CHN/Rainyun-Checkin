@@ -78,9 +78,9 @@ XPATH_CONFIG = {
     # “每日签到”卡片头部（只在该模块内读取状态文案，避免其他任务卡片的“已完成”导致误判）
     "SIGN_IN_HEADER": "//div[contains(@class, 'card-header') and .//span[contains(normalize-space(.), '每日签到')]]",
     "SIGN_IN_HEADER_FALLBACK": "//span[contains(normalize-space(.), '每日签到')]/ancestor::div[1]",
-    # 匹配签到文案的最内层精确文本节点；控件可能不是标准 a/button/span 标签。
-    "SIGN_IN_BTN": "//div[contains(@class, 'card-header') and .//span[contains(normalize-space(.), '每日签到')]]//*[normalize-space(.)='领取奖励' or normalize-space(.)='去完成' or normalize-space(.)='去签到'][not(.//*[normalize-space(.)='领取奖励' or normalize-space(.)='去完成' or normalize-space(.)='去签到'])]",
-    "SIGN_IN_BTN_FALLBACK": "//span[contains(normalize-space(.), '每日签到')]/ancestor::div[1]//*[normalize-space(.)='领取奖励' or normalize-space(.)='去完成' or normalize-space(.)='去签到'][not(.//*[normalize-space(.)='领取奖励' or normalize-space(.)='去完成' or normalize-space(.)='去签到'])]",
+    # 匹配包含签到文案的最内层文本节点；控件可能带图标文本或不是标准按钮标签。
+    "SIGN_IN_BTN": "//div[contains(@class, 'card-header') and .//span[contains(normalize-space(.), '每日签到')]]//*[contains(normalize-space(.), '领取奖励') or contains(normalize-space(.), '去完成') or contains(normalize-space(.), '去签到')][not(.//*[contains(normalize-space(.), '领取奖励') or contains(normalize-space(.), '去完成') or contains(normalize-space(.), '去签到')])]",
+    "SIGN_IN_BTN_FALLBACK": "//span[contains(normalize-space(.), '每日签到')]/ancestor::div[1]//*[contains(normalize-space(.), '领取奖励') or contains(normalize-space(.), '去完成') or contains(normalize-space(.), '去签到')][not(.//*[contains(normalize-space(.), '领取奖励') or contains(normalize-space(.), '去完成') or contains(normalize-space(.), '去签到')])]",
     # 页面新版优先通过积分语义定位，旧 XPath 仅作为最后兼容项。
     "POINTS_BY_LABEL": "//*[contains(normalize-space(.), '剩余积分') or contains(normalize-space(.), '当前积分') or contains(normalize-space(.), '积分余额')]/ancestor::*[self::div or self::section][1]//h3",
     "POINTS_HEADER": '//*[@id="app"]/div[1]/div[3]/div[2]/div/div/div[2]/div[1]/div[1]/div/p/div/h3',
@@ -523,6 +523,29 @@ def get_daily_sign_card_text(driver: WebDriver) -> str:
     return ""
 
 
+def get_daily_sign_dom_diagnostic(driver: WebDriver, limit: int = 3) -> str:
+    """失败时输出每日签到标题下最短的签到文案节点，便于诊断前端结构变化。"""
+    try:
+        headers = driver.find_elements(By.XPATH, XPATH_CONFIG["SIGN_IN_HEADER"])
+        if not headers:
+            return "未找到签到卡片头部节点"
+        candidates = []
+        for element in headers[0].find_elements(By.XPATH, ".//*[contains(normalize-space(.), '去签到') or contains(normalize-space(.), '领取奖励') or contains(normalize-space(.), '去完成')]"):
+            try:
+                text = re.sub(r"\s+", " ", (element.get_attribute("innerText") or element.text or "")).strip()
+                outer_html = element.get_attribute("outerHTML") or ""
+                if text:
+                    candidates.append((len(text), element.tag_name, text, outer_html[:500]))
+            except Exception:
+                continue
+        candidates.sort(key=lambda item: item[0])
+        if not candidates:
+            return "签到卡片头部内没有包含操作文案的子节点"
+        return " | ".join(f"tag={tag}, text=[{text}], html=[{outer_html}]" for _, tag, text, outer_html in candidates[:limit])
+    except Exception as e:
+        return f"DOM诊断读取失败: {type(e).__name__}"
+
+
 def detect_daily_sign_done_pattern(driver: WebDriver) -> str | None:
     """仅在“每日签到”模块头部文本中检测完成态关键字"""
     header_text = get_daily_sign_header_text(driver)
@@ -759,7 +782,8 @@ def run():
                 return
             header_text = get_daily_sign_header_text(ctx.driver)
             card_text = get_daily_sign_card_text(ctx.driver)
-            logger.error(f"每日签到按钮定位失败诊断: header_text=[{header_text}], card_text=[{card_text[:180]}]")
+            dom_details = get_daily_sign_dom_diagnostic(ctx.driver)
+            logger.error(f"每日签到按钮定位失败诊断: header_text=[{header_text}], card_text=[{card_text[:180]}], dom=[{dom_details}]")
             raise Exception("未找到每日签到领取按钮，且每日签到模块未显示已签到状态")
 
         logger.info("处理验证码")
