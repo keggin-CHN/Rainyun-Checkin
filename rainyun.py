@@ -526,22 +526,29 @@ def get_daily_sign_card_text(driver: WebDriver) -> str:
 def get_daily_sign_dom_diagnostic(driver: WebDriver, limit: int = 3) -> str:
     """失败时输出每日签到标题下最短的签到文案节点，便于诊断前端结构变化。"""
     try:
-        headers = driver.find_elements(By.XPATH, XPATH_CONFIG["SIGN_IN_HEADER"])
-        if not headers:
-            return "未找到签到卡片头部节点"
         candidates = []
-        for element in headers[0].find_elements(By.XPATH, ".//*[contains(normalize-space(.), '去签到') or contains(normalize-space(.), '领取奖励') or contains(normalize-space(.), '去完成')]"):
-            try:
-                text = re.sub(r"\s+", " ", (element.get_attribute("innerText") or element.text or "")).strip()
-                outer_html = element.get_attribute("outerHTML") or ""
-                if text:
-                    candidates.append((len(text), element.tag_name, text, outer_html[:500]))
-            except Exception:
+        scope_html = ""
+        for scope_xpath in (XPATH_CONFIG["SIGN_IN_HEADER"], XPATH_CONFIG["SIGN_IN_HEADER_FALLBACK"]):
+            scopes = driver.find_elements(By.XPATH, scope_xpath)
+            if not scopes:
                 continue
+            scope_html = (scopes[0].get_attribute("outerHTML") or "")[:1800]
+            candidates = []
+            for element in scopes[0].find_elements(By.XPATH, ".//*[contains(normalize-space(.), '去签到') or contains(normalize-space(.), '领取奖励') or contains(normalize-space(.), '去完成')]"):
+                try:
+                    text = re.sub(r"\s+", " ", (element.get_attribute("innerText") or element.text or "")).strip()
+                    outer_html = element.get_attribute("outerHTML") or ""
+                    if text:
+                        candidates.append((len(text), element.tag_name, text, outer_html[:500]))
+                except Exception:
+                    continue
+            if candidates:
+                break
         candidates.sort(key=lambda item: item[0])
         if not candidates:
-            return "签到卡片头部内没有包含操作文案的子节点"
-        return " | ".join(f"tag={tag}, text=[{text}], html=[{outer_html}]" for _, tag, text, outer_html in candidates[:limit])
+            return f"未找到包含操作文案的后代节点, scope=[{scope_html}]"
+        details = " | ".join(f"tag={tag}, text=[{text}], html=[{outer_html}]" for _, tag, text, outer_html in candidates[:limit])
+        return f"scope=[{scope_html}], matches=[{details}]"
     except Exception as e:
         return f"DOM诊断读取失败: {type(e).__name__}"
 
