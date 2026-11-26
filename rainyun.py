@@ -78,14 +78,18 @@ XPATH_CONFIG = {
     # “每日签到”卡片头部（只在该模块内读取状态文案，避免其他任务卡片的“已完成”导致误判）
     "SIGN_IN_HEADER": "//div[contains(@class, 'card-header') and .//span[contains(normalize-space(.), '每日签到')]]",
     "SIGN_IN_HEADER_FALLBACK": "//span[contains(normalize-space(.), '每日签到')]/ancestor::div[1]",
-    # “每日签到”按钮：兼容 a/button 标签与常见文案变体
-    "SIGN_IN_BTN": "//div[contains(@class, 'card-header') and .//span[contains(normalize-space(.), '每日签到')]]//*[self::a or self::button][contains(normalize-space(.), '领取奖励') or contains(normalize-space(.), '去完成') or contains(normalize-space(.), '去签到')]",
-    "SIGN_IN_BTN_FALLBACK": "//span[contains(normalize-space(.), '每日签到')]/ancestor::div[1]//*[self::a or self::button][contains(normalize-space(.), '领取奖励') or contains(normalize-space(.), '去完成') or contains(normalize-space(.), '去签到')]",
+    # 仅匹配签到按钮的精确文案，并排除包含同文案后代的外层可点击容器。
+    "SIGN_IN_BTN": "//div[contains(@class, 'card-header') and .//span[contains(normalize-space(.), '每日签到')]]//*[self::a or self::button or self::span][normalize-space(.)='领取奖励' or normalize-space(.)='去完成' or normalize-space(.)='去签到'][not(.//*[self::a or self::button or self::span][normalize-space(.)='领取奖励' or normalize-space(.)='去完成' or normalize-space(.)='去签到'])]",
+    "SIGN_IN_BTN_FALLBACK": "//span[contains(normalize-space(.), '每日签到')]/ancestor::div[1]//*[self::a or self::button or self::span][normalize-space(.)='领取奖励' or normalize-space(.)='去完成' or normalize-space(.)='去签到'][not(.//*[self::a or self::button or self::span][normalize-space(.)='领取奖励' or normalize-space(.)='去完成' or normalize-space(.)='去签到'])]",
+    # 页面新版优先通过积分语义定位，旧 XPath 仅作为最后兼容项。
+    "POINTS_BY_LABEL": "//*[contains(normalize-space(.), '剩余积分') or contains(normalize-space(.), '当前积分') or contains(normalize-space(.), '积分余额')]/ancestor::*[self::div or self::section][1]//h3",
     "POINTS_HEADER": '//*[@id="app"]/div[1]/div[3]/div[2]/div/div/div[2]/div[1]/div[1]/div/p/div/h3',
 }
 
 DAILY_SIGN_CLAIM_TEXTS = ("领取奖励", "去完成", "去签到")
-DAILY_SIGN_CLAIM_XPATH = "//*[self::a or self::button][contains(normalize-space(.), '领取奖励') or contains(normalize-space(.), '去完成') or contains(normalize-space(.), '去签到')]"
+CAPTCHA_IFRAME_XPATH = "//iframe[contains(@id, 'tcaptcha_iframe') or contains(@src, 'tcaptcha')]"
+SIGN_DIALOG_XPATH = "//*[@role='dialog' or contains(@class, 'el-dialog') or contains(@class, 'ant-modal') or contains(@class, 'modal') or contains(@class, 'popup') or contains(@class, 'dialog')]"
+SIGN_DIALOG_ACTION_XPATH = ".//*[self::a or self::button or self::span][normalize-space(.)='去签到' or normalize-space(.)='立即签到' or normalize-space(.)='开始签到' or normalize-space(.)='签到'][not(.//*[self::a or self::button or self::span][normalize-space(.)='去签到' or normalize-space(.)='立即签到' or normalize-space(.)='开始签到' or normalize-space(.)='签到'])]"
 # 只在“每日签到”模块范围内匹配这些完成态文案，绝不扫描整个 page_source
 DAILY_SIGN_DONE_PATTERNS = ("已完成", "已领取", "已签到", "明日再来")
 
@@ -151,10 +155,8 @@ def do_login(ctx: RuntimeContext, user: str, pwd: str) -> bool:
             return False
 
         try:
-            captcha_wait = WebDriverWait(ctx.driver, 8 if attempt > 1 else 15, poll_frequency=0.5)
-            captcha_wait.until(EC.visibility_of_element_located((By.ID, 'tcaptcha_iframe_dy')))
+            switch_to_visible_captcha_frame(ctx.driver, 8 if attempt > 1 else 15)
             logger.warning("触发验证码！")
-            ctx.driver.switch_to.frame("tcaptcha_iframe_dy")
             if not process_captcha(ctx):
                 logger.error("登录验证码识别失败")
                 return False
@@ -570,20 +572,85 @@ def find_daily_sign_claim_button(ctx: RuntimeContext, timeout: int):
                         return el
                 except Exception:
                     continue
-            if elems:
-                return elems[0]
         return False
 
     return wait.until(_locate)
 
 
-def read_current_points(ctx: RuntimeContext) -> int | None:
-    """读取页面显示的当前剩余积分"""
+def switch_to_visible_captcha_frame(driver: WebDriver, timeout: int = 10):
+    """切换到真正显示且有尺寸的腾讯验证码 iframe，跳过页面残留的隐藏 iframe。"""
+    driver.switch_to.default_content()
+
+    def _visible_frame(d):
+        for frame in d.find_elements(By.XPATH, CAPTCHA_IFRAME_XPATH):
+            try:
+                size = frame.size or {}
+                if frame.is_displayed() and size.get("width", 0) > 0 and size.get("height", 0) > 0:
+                    return frame
+            except Exception:
+                continue
+        return False
+
+    frame = WebDriverWait(driver, timeout, poll_frequency=0.5).until(_visible_frame)
+    driver.switch_to.frame(frame)
+    return frame
+
+
+def switch_to_new_window_if_opened(driver: WebDriver, existing_handles: set[str], timeout: float = 2.0) -> bool:
+    """签到按钮可能打开独立页面；发现新窗口时切换过去继续检测交互。"""
     try:
-        points_raw = ctx.wait.until(
-            EC.visibility_of_element_located((By.XPATH, XPATH_CONFIG["POINTS_HEADER"]))
-        ).get_attribute("textContent")
-        return int("".join(re.findall(r"\d+", points_raw)))
+        new_handle = WebDriverWait(driver, timeout, poll_frequency=0.25).until(
+            lambda d: next((handle for handle in d.window_handles if handle not in existing_handles), False)
+        )
+    except TimeoutException:
+        return False
+    driver.switch_to.window(new_handle)
+    logger.info("签到操作打开了新窗口，已切换到新窗口继续处理")
+    return True
+
+
+def click_daily_sign_dialog_action(driver: WebDriver) -> bool:
+    """仅在明确属于每日签到/转盘的弹窗内点击确认签到，不触发普通抽奖操作。"""
+    for dialog in driver.find_elements(By.XPATH, SIGN_DIALOG_XPATH):
+        try:
+            if not dialog.is_displayed():
+                continue
+            dialog_text = re.sub(r"\s+", " ", (dialog.get_attribute("innerText") or dialog.text or "")).strip()
+            if not any(marker in dialog_text for marker in ("每日签到", "转盘")):
+                continue
+            for action in dialog.find_elements(By.XPATH, SIGN_DIALOG_ACTION_XPATH):
+                try:
+                    if action.is_displayed() and action.is_enabled():
+                        action_text = re.sub(r"\s+", " ", (action.get_attribute("innerText") or action.text or "")).strip()
+                        action.click()
+                        logger.info(f"已点击每日签到弹窗确认按钮: [{action_text}]")
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            continue
+    return False
+
+
+def read_current_points(ctx: RuntimeContext, timeout: int = 15) -> int | None:
+    """读取页面显示的当前剩余积分"""
+    selectors = (XPATH_CONFIG["POINTS_BY_LABEL"], XPATH_CONFIG["POINTS_HEADER"])
+
+    def _find_points_element(driver):
+        for xpath in selectors:
+            for element in driver.find_elements(By.XPATH, xpath):
+                try:
+                    if element.is_displayed():
+                        raw_text = element.get_attribute("textContent") or element.text or ""
+                        digits = re.findall(r"\d+", raw_text)
+                        if digits:
+                            return int("".join(digits))
+                except Exception:
+                    continue
+        return False
+
+    try:
+        return WebDriverWait(ctx.driver, timeout, poll_frequency=0.5).until(_find_points_element)
     except Exception as e:
         logger.warning(f"获取积分信息失败: {e}")
         return None
@@ -659,7 +726,7 @@ def run():
             if not wait_daily_sign_section_ready(ctx, timeout):
                 raise Exception(f"赚取积分页加载超时：未找到每日签到模块 (URL: {ctx.driver.current_url})")
 
-        start_points = read_current_points(ctx)
+        start_points = read_current_points(ctx, timeout=timeout)
         if start_points is not None:
             logger.info(f"签到前积分: {start_points} | 约为 {start_points / POINTS_TO_CNY_RATE:.2f} 元")
 
@@ -674,6 +741,8 @@ def run():
             return
 
         # 2. 寻找并点击“每日签到”模块内的领取按钮
+        original_window_handle = ctx.driver.current_window_handle
+        window_handles_before_click = set(ctx.driver.window_handles)
         try:
             earn = find_daily_sign_claim_button(ctx, timeout)
             btn_text = re.sub(r"\s+", " ", (earn.get_attribute("innerText") or earn.text or "").strip())
@@ -695,19 +764,36 @@ def run():
 
         logger.info("处理验证码")
         try:
-            ctx.wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, 'tcaptcha_iframe_dy')))
+            switch_to_new_window_if_opened(ctx.driver, window_handles_before_click)
+            try:
+                switch_to_visible_captcha_frame(ctx.driver, timeout=max(8, timeout))
+            except TimeoutException:
+                if not click_daily_sign_dialog_action(ctx.driver):
+                    raise
+                switch_to_visible_captcha_frame(ctx.driver, timeout=max(8, timeout))
             if not process_captcha(ctx):
                 logger.error(f"验证码重试次数过多，任务失败。当前页面状态: {ctx.driver.current_url}")
                 raise Exception("验证码识别重试次数过多，签到失败")
         except TimeoutException:
-            logger.warning("验证码 iframe 未出现，检查每日签到模块状态")
+            logger.warning("未检测到可见验证码 iframe，已检查签到弹窗，继续核验签到状态")
         finally:
             ctx.driver.switch_to.default_content()
 
         # 3. 验证码处理后，确认“每日签到”模块确实变为完成状态（或积分增加）
         done_pattern = wait_daily_sign_done_pattern(ctx.driver, timeout=12)
         time.sleep(2)
-        current_points = read_current_points(ctx)
+        current_points = read_current_points(ctx, timeout=timeout)
+
+        # 若签到在新窗口完成但状态/余额只同步回主页面，再到主页面补做一次核验。
+        if not done_pattern and (current_points is None or start_points is None or current_points <= start_points):
+            try:
+                if original_window_handle in ctx.driver.window_handles and ctx.driver.current_window_handle != original_window_handle:
+                    ctx.driver.switch_to.window(original_window_handle)
+                    done_pattern = wait_daily_sign_done_pattern(ctx.driver, timeout=3)
+                    current_points = read_current_points(ctx, timeout=3)
+            except Exception as e:
+                logger.debug(f"主页面签到状态回查失败: {e}")
+
         if current_points is not None:
             earned_info = ""
             if start_points is not None and current_points >= start_points:
