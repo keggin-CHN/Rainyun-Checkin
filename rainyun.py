@@ -83,6 +83,8 @@ XPATH_CONFIG = {
     # 兼容旧版卡片中独立的领取/完成/签到操作节点。
     "SIGN_IN_BTN_LEGACY": "//*[contains(concat(' ', normalize-space(@class), ' '), ' card-header ') and .//span[contains(normalize-space(.), '每日签到')]]//*[contains(normalize-space(.), '领取奖励') or contains(normalize-space(.), '去完成') or contains(normalize-space(.), '去签到')][not(.//*[contains(normalize-space(.), '领取奖励') or contains(normalize-space(.), '去完成') or contains(normalize-space(.), '去签到')])]",
     "SIGN_IN_BTN_FALLBACK": "//span[contains(normalize-space(.), '每日签到')]/ancestor::div[1]//*[contains(normalize-space(.), '领取奖励') or contains(normalize-space(.), '去完成') or contains(normalize-space(.), '去签到')][not(.//*[contains(normalize-space(.), '领取奖励') or contains(normalize-space(.), '去完成') or contains(normalize-space(.), '去签到')])]",
+    # 新版“每日签到”弹窗面板（BModal 渲染到 body 的签到组件根节点，class 精确为 daily-check-in）
+    "DAILY_SIGN_MODAL": "//div[contains(concat(' ', normalize-space(@class), ' '), ' daily-check-in ')]",
     # 页面新版优先通过积分语义定位，旧 XPath 仅作为最后兼容项。
     "POINTS_BY_LABEL": "//*[contains(normalize-space(.), '剩余积分') or contains(normalize-space(.), '当前积分') or contains(normalize-space(.), '积分余额')]/ancestor::*[self::div or self::section][1]//h3",
     "POINTS_HEADER": '//*[@id="app"]/div[1]/div[3]/div[2]/div/div/div[2]/div[1]/div[1]/div/p/div/h3',
@@ -90,6 +92,8 @@ XPATH_CONFIG = {
 
 DAILY_SIGN_CLAIM_TEXTS = ("领取奖励", "去完成", "去签到")
 CAPTCHA_IFRAME_XPATH = "//iframe[contains(@id, 'tcaptcha_iframe') or contains(@src, 'tcaptcha')]"
+# 新版“每日签到”弹窗内可点击的奖励按钮（优先 500 积分），由前端 DailyCheckIn 组件渲染。
+DAILY_SIGN_REWARD_BTN_XPATH = "//div[contains(concat(' ', normalize-space(@class), ' '), ' daily-check-in ')]//button[contains(concat(' ', normalize-space(@class), ' '), ' daily-check-in__reward ')]"
 SIGN_DIALOG_XPATH = "//*[@role='dialog' or contains(@class, 'el-dialog') or contains(@class, 'ant-modal') or contains(@class, 'modal') or contains(@class, 'popup') or contains(@class, 'dialog')]"
 SIGN_DIALOG_ACTION_XPATH = ".//*[self::a or self::button or self::span][normalize-space(.)='去签到' or normalize-space(.)='立即签到' or normalize-space(.)='开始签到' or normalize-space(.)='签到'][not(.//*[self::a or self::button or self::span][normalize-space(.)='去签到' or normalize-space(.)='立即签到' or normalize-space(.)='开始签到' or normalize-space(.)='签到'])]"
 # 只在“每日签到”模块范围内匹配这些完成态文案，绝不扫描整个 page_source
@@ -571,15 +575,22 @@ def find_daily_sign_claim_button(ctx: RuntimeContext, timeout: int):
     wait = WebDriverWait(ctx.driver, timeout, poll_frequency=0.5)
 
     def _locate(d: WebDriver):
+        best_hidden = None
         for xpath in (XPATH_CONFIG["SIGN_IN_BTN"], XPATH_CONFIG["SIGN_IN_BTN_LEGACY"], XPATH_CONFIG["SIGN_IN_BTN_FALLBACK"]):
             elems = d.find_elements(By.XPATH, xpath)
             for el in elems:
                 try:
-                    if el.is_displayed() and el.is_enabled():
+                    if not el.is_enabled():
+                        continue
+                    if el.is_displayed():
                         return el
+                    # 新版卡片头按钮在部分布局下判定为不可见（如被 overlay 遮挡），
+                    # 但 JS 点击仍能触发其 click 监听打开弹窗，先记住它作为兜底。
+                    if best_hidden is None:
+                        best_hidden = el
                 except Exception:
                     continue
-        return False
+        return best_hidden or False
 
     return wait.until(_locate)
 
@@ -670,8 +681,41 @@ def switch_to_new_window_if_opened(driver: WebDriver, existing_handles: set[str]
     return True
 
 
+def click_daily_sign_reward_button(driver: WebDriver, timeout: int = 10) -> bool:
+    """在新版“每日签到”弹窗中点击奖励按钮（默认第一个：500 积分）。
+
+    前端流程：点击卡片头打开弹窗 -> 弹窗内选择奖励 -> 触发腾讯验证码。
+    若奖励按钮尚未出现（弹窗动画中），会持续等待 timeout 秒。
+    """
+    wait = WebDriverWait(driver, timeout, poll_frequency=0.5)
+
+    def _find(d: WebDriver):
+        try:
+            for btn in d.find_elements(By.XPATH, DAILY_SIGN_REWARD_BTN_XPATH):
+                if btn.is_displayed() and btn.is_enabled():
+                    return btn
+        except Exception:
+            pass
+        return False
+
+    try:
+        reward_btn = wait.until(_find)
+    except TimeoutException:
+        return False
+    reward_text = re.sub(r"\s+", " ", (reward_btn.get_attribute("innerText") or reward_btn.text or "").strip())
+    try:
+        reward_btn.click()
+    except Exception:
+        driver.execute_script("arguments[0].click();", reward_btn)
+    logger.info(f"已点击每日签到弹窗奖励按钮: [{reward_text}]")
+    return True
+
+
 def click_daily_sign_dialog_action(driver: WebDriver) -> bool:
-    """仅在明确属于每日签到/转盘的弹窗内点击确认签到，不触发普通抽奖操作。"""
+    """兼容旧交互：在每日签到/转盘弹窗内点击确认签到；新版弹窗则点击奖励按钮。"""
+    # 新版弹窗：点击奖励按钮（500 积分 / 抽奖券）后触发验证码
+    if driver.find_elements(By.XPATH, XPATH_CONFIG["DAILY_SIGN_MODAL"]):
+        return click_daily_sign_reward_button(driver, timeout=1)
     for dialog in driver.find_elements(By.XPATH, SIGN_DIALOG_XPATH):
         try:
             if not dialog.is_displayed():
@@ -809,7 +853,11 @@ def run():
             btn_text = re.sub(r"\s+", " ", (earn.get_attribute("innerText") or earn.text or "").strip())
             logger.info(f"点击每日签到按钮: [{btn_text}]")
             try:
-                earn.click()
+                if earn.is_displayed():
+                    earn.click()
+                else:
+                    logger.warning("每日签到按钮在当前布局中不可见，改用 JS 触发点击事件")
+                    ctx.driver.execute_script("arguments[0].click();", earn)
             except Exception:
                 ctx.driver.execute_script("arguments[0].click();", earn)
         except TimeoutException:
@@ -830,7 +878,8 @@ def run():
             try:
                 switch_to_visible_captcha_frame(ctx.driver, timeout=max(8, timeout))
             except TimeoutException:
-                if not click_daily_sign_dialog_action(ctx.driver):
+                # 新版前端：点击“去签到”后先弹出“每日签到”弹窗，需在弹窗中点击奖励按钮才会触发验证码
+                if not click_daily_sign_reward_button(ctx.driver, timeout=max(8, timeout)):
                     raise
                 switch_to_visible_captcha_frame(ctx.driver, timeout=max(8, timeout))
             if not process_captcha(ctx):
