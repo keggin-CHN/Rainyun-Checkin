@@ -319,7 +319,7 @@ def process_captcha(ctx: RuntimeContext, retry_count: int = 0):
                     position_key = f"sprite_{i + 1}.position"
                     positon = result[position_key]
                     logger.info(f"图案 {i + 1} 位于 ({positon})，匹配率：{result[similarity_key]}")
-                    slide_bg = ctx.wait.until(EC.visibility_of_element_located((By.XPATH, '//*[@id="slideBg"]')))
+                    slide_bg = ctx.wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="slideBg"]')))
                     style = slide_bg.get_attribute("style")
                     x, y = int(positon.split(",")[0]), int(positon.split(",")[1])
                     width_raw, height_raw = captcha.shape[1], captcha.shape[0]
@@ -332,11 +332,11 @@ def process_captcha(ctx: RuntimeContext, retry_count: int = 0):
                     final_x, final_y = int(x_offset + x / width_raw * width), int(y_offset + y / height_raw * height)
                     ActionChains(ctx.driver).move_to_element_with_offset(slide_bg, final_x, final_y).click().perform()
                 confirm = ctx.wait.until(
-                    EC.element_to_be_clickable((By.XPATH, '//*[@id="tcStatus"]/div[2]/div[2]/div/div')))
+                    EC.presence_of_element_located((By.XPATH, '//*[@id="tcStatus"]/div[2]/div[2]/div/div')))
                 logger.info("提交验证码")
                 confirm.click()
                 time.sleep(5)
-                result_el = ctx.wait.until(EC.visibility_of_element_located((By.XPATH, '//*[@id="tcOperation"]')))
+                result_el = ctx.wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="tcOperation"]')))
                 if 'show-success' in result_el.get_attribute("class"):
                     logger.info("验证码通过")
                     return True
@@ -387,14 +387,15 @@ def process_captcha(ctx: RuntimeContext, retry_count: int = 0):
 
 def download_captcha_img(ctx: RuntimeContext):
     clear_temp_dir(ctx.temp_dir)
-    slide_bg = ctx.wait.until(EC.visibility_of_element_located((By.XPATH, '//*[@id="slideBg"]')))
+    # headless 下弹层可能位于视口外导致 visibility 误报，统一改为 presence
+    slide_bg = ctx.wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="slideBg"]')))
     img1_style = slide_bg.get_attribute("style")
     img1_url = get_url_from_style(img1_style)
     logger.info("开始下载验证码图片(1): " + img1_url)
     # 修复：检查下载是否成功
     if not download_image(img1_url, temp_path(ctx, "captcha.jpg")):
         raise CaptchaRetryableError("验证码背景图下载失败")
-    sprite = ctx.wait.until(EC.visibility_of_element_located((By.XPATH, '//*[@id="instruction"]/div/img')))
+    sprite = ctx.wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="instruction"]/div/img')))
     img2_url = sprite.get_attribute("src")
     logger.info("开始下载验证码图片(2): " + img2_url)
     # 修复：检查下载是否成功
