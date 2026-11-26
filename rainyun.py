@@ -566,14 +566,21 @@ def find_daily_sign_claim_button(ctx: RuntimeContext, timeout: int):
     wait = WebDriverWait(ctx.driver, timeout, poll_frequency=0.5)
 
     def _locate(d: WebDriver):
+        hidden_daily_action = None
         for xpath in (XPATH_CONFIG["SIGN_IN_BTN"], XPATH_CONFIG["SIGN_IN_BTN_LEGACY"], XPATH_CONFIG["SIGN_IN_BTN_FALLBACK"]):
             elems = d.find_elements(By.XPATH, xpath)
             for el in elems:
                 try:
-                    if el.is_displayed() and el.is_enabled():
+                    if not el.is_enabled():
+                        continue
+                    if el.is_displayed():
                         return el
+                    if xpath == XPATH_CONFIG["SIGN_IN_BTN"]:
+                        hidden_daily_action = el
                 except Exception:
                     continue
+        if hidden_daily_action is not None:
+            return hidden_daily_action
         return False
 
     return wait.until(_locate)
@@ -769,10 +776,14 @@ def run():
         try:
             earn = find_daily_sign_claim_button(ctx, timeout)
             btn_text = re.sub(r"\s+", " ", (earn.get_attribute("innerText") or earn.text or "").strip())
-            logger.info(f"点击每日签到按钮: [{btn_text}]")
-            try:
-                earn.click()
-            except Exception:
+            if earn.is_displayed():
+                logger.info(f"点击每日签到按钮: [{btn_text}]")
+                try:
+                    earn.click()
+                except Exception:
+                    ctx.driver.execute_script("arguments[0].click();", earn)
+            else:
+                logger.warning(f"每日签到专用按钮在当前布局中不可见，尝试触发其点击事件: [{btn_text}]")
                 ctx.driver.execute_script("arguments[0].click();", earn)
         except TimeoutException:
             done_pattern = detect_daily_sign_done_pattern(ctx.driver)
