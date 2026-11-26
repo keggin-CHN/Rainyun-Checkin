@@ -593,8 +593,17 @@ def get_daily_sign_button_diagnostic(driver: WebDriver) -> str:
             for element in elements[:2]:
                 try:
                     text = re.sub(r"\s+", " ", (element.get_attribute("innerText") or element.text or "")).strip()
+                    styles = driver.execute_script(
+                        """let n=arguments[0], out=[]; for(let i=0;n&&i<5;i++,n=n.parentElement){
+                        let s=getComputedStyle(n),r=n.getBoundingClientRect();
+                        out.push(n.tagName.toLowerCase()+'.'+String(n.className||'').replace(/\\s+/g,'.')+
+                        '{display:'+s.display+',visibility:'+s.visibility+',opacity:'+s.opacity+
+                        ',rect:'+Math.round(r.width)+'x'+Math.round(r.height)+'@'+Math.round(r.x)+','+Math.round(r.y)+'}');}
+                        return out.join(' <- ');""",
+                        element,
+                    )
                     details.append(
-                        f"{key}:tag={element.tag_name}, visible={element.is_displayed()}, enabled={element.is_enabled()}, text=[{text[:100]}]"
+                        f"{key}:tag={element.tag_name}, visible={element.is_displayed()}, enabled={element.is_enabled()}, text=[{text[:100]}], styles=[{styles}]"
                     )
                 except Exception as e:
                     details.append(f"{key}: candidate inspection failed ({type(e).__name__})")
@@ -602,6 +611,30 @@ def get_daily_sign_button_diagnostic(driver: WebDriver) -> str:
                 details.append(f"{key}: no matches")
         except Exception as e:
             details.append(f"{key}: XPath error ({type(e).__name__})")
+    try:
+        generic = driver.find_elements(By.XPATH, "//*[contains(normalize-space(.), '去签到')]")
+        other_matches = []
+        for element in generic:
+            try:
+                text = re.sub(r"\s+", " ", (element.get_attribute("innerText") or element.text or "")).strip()
+                if not text or len(text) > 100:
+                    continue
+                styles = driver.execute_script(
+                    """let n=arguments[0], out=[]; for(let i=0;n&&i<4;i++,n=n.parentElement){
+                    let s=getComputedStyle(n),r=n.getBoundingClientRect();
+                    out.push(n.tagName.toLowerCase()+'.'+String(n.className||'').replace(/\\s+/g,'.')+
+                    '{display:'+s.display+',visibility:'+s.visibility+',rect:'+Math.round(r.width)+'x'+Math.round(r.height)+'}');}
+                    return out.join(' <- ');""",
+                    element,
+                )
+                other_matches.append(f"{element.tag_name},visible={element.is_displayed()},text=[{text}],styles=[{styles}]")
+                if len(other_matches) >= 8:
+                    break
+            except Exception:
+                continue
+        details.append("page text candidates=[" + " | ".join(other_matches) + "]")
+    except Exception as e:
+        details.append(f"page text query failed ({type(e).__name__})")
     return " | ".join(details)
 
 
