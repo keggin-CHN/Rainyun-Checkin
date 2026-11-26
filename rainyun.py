@@ -725,9 +725,11 @@ def click_daily_sign_reward_button(driver: WebDriver, timeout: int = 10) -> bool
     wait = WebDriverWait(driver, timeout, poll_frequency=0.5)
 
     def _find(d: WebDriver):
+        # 注意：headless 布局下弹窗可能整体位于视口外，is_displayed() 会误报 False，
+        # 因此只要求元素存在于 DOM 且可交互（enabled），点击一律走 JS。
         try:
             for btn in d.find_elements(By.XPATH, DAILY_SIGN_REWARD_BTN_XPATH):
-                if btn.is_displayed() and btn.is_enabled():
+                if btn.is_enabled():
                     return btn
         except Exception:
             pass
@@ -739,10 +741,7 @@ def click_daily_sign_reward_button(driver: WebDriver, timeout: int = 10) -> bool
         log_sign_modal_diagnostic(driver, "奖励按钮等待超时")
         return False
     reward_text = re.sub(r"\s+", " ", (reward_btn.get_attribute("innerText") or reward_btn.text or "").strip())
-    try:
-        reward_btn.click()
-    except Exception:
-        driver.execute_script("arguments[0].click();", reward_btn)
+    driver.execute_script("arguments[0].click();", reward_btn)
     logger.info(f"已点击每日签到弹窗奖励按钮: [{reward_text}]")
     return True
 
