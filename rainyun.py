@@ -659,7 +659,17 @@ def switch_to_visible_captcha_frame(driver: WebDriver, timeout: int = 10):
     driver.switch_to.default_content()
 
     def _visible_frame(d):
-        for frame in d.find_elements(By.XPATH, CAPTCHA_IFRAME_XPATH):
+        frames = d.find_elements(By.XPATH, CAPTCHA_IFRAME_XPATH)
+        if len(frames) > 1:
+            for i, frame in enumerate(frames):
+                try:
+                    logger.info(
+                        f"验证码 iframe 候选{i}: id={frame.get_attribute('id')}, size={frame.size}, "
+                        f"displayed={frame.is_displayed()}"
+                    )
+                except Exception:
+                    pass
+        for frame in frames:
             try:
                 size = frame.size or {}
                 if size.get("width", 0) > 0 and size.get("height", 0) > 0:
