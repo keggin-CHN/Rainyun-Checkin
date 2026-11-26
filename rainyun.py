@@ -34,6 +34,8 @@ from config import (
     POINTS_TO_CNY_RATE,
 )
 
+import ICR
+
 # 自定义异常：验证码处理过程中可重试的错误
 class CaptchaRetryableError(Exception):
     """可重试的验证码处理错误（如下载失败、网络问题等）"""
@@ -297,59 +299,97 @@ def get_element_size(element) -> tuple[float, float]:
     return float(width), float(height)
 
 
+def _human_track(dx: float, dy: float, steps: int | None = None) -> list[tuple[int, int]]:
+    """ease-out 拆分位移，返回逐段 [(step_x, step_y), ...]，末段补齐取整误差"""
+    steps = steps or max(4, min(14, int(max(abs(dx), abs(dy)) ** 0.5)))
+    weights = [(steps - i) ** 1.5 for i in range(steps)]
+    total = sum(weights)
+
+    track, moved_x, moved_y, acc = [], 0, 0, 0.0
+    for w in weights:
+        acc += w
+        to_x, to_y = round(dx * acc / total), round(dy * acc / total)
+        track.append((to_x - moved_x, to_y - moved_y))
+        moved_x, moved_y = to_x, to_y
+    track[-1] = (track[-1][0] + dx - moved_x, track[-1][1] + dy - moved_y)
+    return track
+
+
+def click_captcha_point(ctx: RuntimeContext, slide_bg, offset_x: float, offset_y: float) -> bool:
+    """点击验证码图片内的 (offset_x, offset_y)；offset 相对元素左上角，分多段移动避免瞬移被判为脚本"""
+    try:
+        width, height = ctx.driver.execute_script(
+            "const r = arguments[0].getBoundingClientRect();"
+            "return [r.width, r.height];", slide_bg)
+        if width <= 0 or height <= 0:
+            logger.warning(f"验证码图片尺寸异常: {width}x{height}，跳过点击")
+            return False
+
+        # move_to_element 把光标放在元素中心，所以偏移量相对中心算
+        dx = int(offset_x - width / 2)
+        dy = int(offset_y - height / 2)
+
+        actions = ActionChains(ctx.driver)
+        actions.move_to_element(slide_bg)
+        for step_x, step_y in _human_track(dx, dy):
+            if step_x or step_y:
+                actions.move_by_offset(step_x, step_y)
+            actions.pause(random.uniform(0.01, 0.03))
+        actions.click().perform()
+        return True
+    except Exception as e:
+        logger.warning(f"点击验证码坐标失败: {e}")
+        return False
+
+
 def process_captcha(ctx: RuntimeContext, retry_count: int = 0):
     if retry_count >= CAPTCHA_RETRY_LIMIT:
         logger.error("验证码重试次数过多，任务失败")
         return False
     try:
         download_captcha_img(ctx)
-        if check_captcha(ctx):
-            logger.info(f"开始识别验证码 (第 {retry_count + 1} 次尝试)")
-            captcha = cv2.imread(temp_path(ctx, "captcha.jpg"))
-            # 修复：检查图片是否成功读取
-            if captcha is None:
-                logger.error("验证码背景图读取失败，可能下载不完整")
-                raise CaptchaRetryableError("验证码图片读取失败")
-            with open(temp_path(ctx, "captcha.jpg"), 'rb') as f:
-                captcha_b = f.read()
-            bboxes = ctx.det.detection(captcha_b)
-            result = dict()
-            for i in range(len(bboxes)):
-                x1, y1, x2, y2 = bboxes[i]
-                spec = captcha[y1:y2, x1:x2]
-                cv2.imwrite(temp_path(ctx, f"spec_{i + 1}.jpg"), spec)
-                for j in range(3):
-                    similarity, matched = compute_similarity(
-                        temp_path(ctx, f"sprite_{j + 1}.jpg"),
-                        temp_path(ctx, f"spec_{i + 1}.jpg")
-                    )
-                    similarity_key = f"sprite_{j + 1}.similarity"
-                    position_key = f"sprite_{j + 1}.position"
-                    if similarity_key in result.keys():
-                        if float(result[similarity_key]) < similarity:
-                            result[similarity_key] = similarity
-                            result[position_key] = f"{int((x1 + x2) / 2)},{int((y1 + y2) / 2)}"
-                    else:
-                            result[similarity_key] = similarity
-                            result[position_key] = f"{int((x1 + x2) / 2)},{int((y1 + y2) / 2)}"
-            if check_answer(result):
-                for i in range(3):
-                    similarity_key = f"sprite_{i + 1}.similarity"
-                    position_key = f"sprite_{i + 1}.position"
-                    positon = result[position_key]
-                    logger.info(f"图案 {i + 1} 位于 ({positon})，匹配率：{result[similarity_key]}")
-                    slide_bg = ctx.wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="slideBg"]')))
-                    style = slide_bg.get_attribute("style")
-                    x, y = int(positon.split(",")[0]), int(positon.split(",")[1])
-                    width_raw, height_raw = captcha.shape[1], captcha.shape[0]
-                    try:
-                        width = get_width_from_style(style)
-                        height = get_height_from_style(style)
-                    except ValueError:
-                        width, height = get_element_size(slide_bg)
-                    x_offset, y_offset = float(-width / 2), float(-height / 2)
-                    final_x, final_y = int(x_offset + x / width_raw * width), int(y_offset + y / height_raw * height)
-                    ActionChains(ctx.driver).move_to_element_with_offset(slide_bg, final_x, final_y).click().perform()
+        logger.info(f"开始识别验证码 (第 {retry_count + 1} 次尝试)")
+
+        # ICR 模板匹配：黑色区域提取 + ±45° 旋转匹配，替代旧的 SIFT 方案
+        positions = ICR.find_part_positions(
+            temp_path(ctx, "captcha.jpg"),
+            temp_path(ctx, "sprite.jpg"),
+            'template',
+        )
+
+        captcha = cv2.imread(temp_path(ctx, "captcha.jpg"))
+        if captcha is None:
+            logger.error("验证码背景图读取失败，可能下载不完整")
+            raise CaptchaRetryableError("验证码图片读取失败")
+        raw_w, raw_h = captcha.shape[1], captcha.shape[0]
+
+        if not positions:
+            logger.error("验证码识别失败，正在重试")
+        else:
+            logger.info(f"识别到 {len(positions)} 个图案位置")
+            all_clicked = True
+            slide_bg = ctx.wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="slideBg"]')))
+            style = slide_bg.get_attribute("style")
+            try:
+                bg_width = get_width_from_style(style)
+                bg_height = get_height_from_style(style)
+            except ValueError:
+                bg_width, bg_height = get_element_size(slide_bg)
+
+            for i, (x, y) in enumerate(positions):
+                logger.info(f"图案 {i + 1} 位于 ({int(x)}, {int(y)})")
+                # 目标坐标相对图片左上角（旧实现错误地从中心偏移起算）
+                target_x = x / raw_w * bg_width
+                target_y = y / raw_h * bg_height
+                if not click_captcha_point(ctx, slide_bg, target_x, target_y):
+                    logger.error("验证码坐标点击失败，跳过提交并刷新重试")
+                    all_clicked = False
+                    break
+                if i < len(positions) - 1:
+                    # 拟人间隔，避免连续点击被判定为脚本
+                    time.sleep(random.uniform(0.4, 0.9))
+
+            if all_clicked:
                 confirm = ctx.wait.until(
                     EC.presence_of_element_located((By.XPATH, '//*[@id="tcStatus"]/div[2]/div[2]/div/div')))
                 logger.info("提交验证码")
@@ -361,10 +401,6 @@ def process_captcha(ctx: RuntimeContext, retry_count: int = 0):
                     return True
                 else:
                     logger.error("验证码未通过，正在重试")
-            else:
-                logger.error("验证码识别失败，正在重试")
-        else:
-            logger.error("当前验证码识别率低，尝试刷新")
 
         reload_btn = ctx.driver.find_element(By.XPATH, '//*[@id="reload"]')
         time.sleep(2)
