@@ -677,11 +677,12 @@ def get_daily_sign_button_diagnostic(driver: WebDriver) -> str:
 
 
 def switch_to_visible_captcha_frame(driver: WebDriver, timeout: int = 10):
-    """切换到有尺寸的腾讯验证码 iframe。
+    """切换到真正弹出验证码的腾讯 iframe。
 
-    注意：headless 布局下弹层可能整体位于视口外，is_displayed() 会误报 False，
-    因此只要求 iframe 存在且宽高大于 0，不再依赖 is_displayed()。
-    页面残留的隐藏 iframe（宽高为 0）依然会被排除。
+    headless 布局下弹层可能整体位于视口外，is_displayed() 会误报 False，
+    因此不能依赖它。但页面可能残留隐藏的验证码占位 iframe，需按尺寸过滤：
+    - 宽高为 0：未渲染的占位
+    - 300x150：iframe 默认尺寸，隐藏 iframe 的典型特征（真实验证码约 320x480+）
     """
     driver.switch_to.default_content()
 
@@ -698,8 +699,13 @@ def switch_to_visible_captcha_frame(driver: WebDriver, timeout: int = 10):
         for frame in frames:
             try:
                 size = frame.size or {}
-                if size.get("width", 0) > 0 and size.get("height", 0) > 0:
-                    return frame
+                w, h = size.get("width", 0), size.get("height", 0)
+                if w <= 0 or h <= 0:
+                    continue
+                if (w, h) == (300, 150):
+                    # iframe 默认尺寸：隐藏的残留占位，真实验证码不会是此尺寸
+                    continue
+                return frame
             except Exception:
                 continue
         return False
