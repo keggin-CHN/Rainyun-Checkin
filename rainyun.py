@@ -78,9 +78,9 @@ XPATH_CONFIG = {
     # “每日签到”卡片头部（只在该模块内读取状态文案，避免其他任务卡片的“已完成”导致误判）
     "SIGN_IN_HEADER": "//div[contains(@class, 'card-header') and .//span[contains(normalize-space(.), '每日签到')]]",
     "SIGN_IN_HEADER_FALLBACK": "//span[contains(normalize-space(.), '每日签到')]/ancestor::div[1]",
-    # 仅匹配签到按钮的精确文案，并排除包含同文案后代的外层可点击容器。
-    "SIGN_IN_BTN": "//div[contains(@class, 'card-header') and .//span[contains(normalize-space(.), '每日签到')]]//*[self::a or self::button or self::span][normalize-space(.)='领取奖励' or normalize-space(.)='去完成' or normalize-space(.)='去签到'][not(.//*[self::a or self::button or self::span][normalize-space(.)='领取奖励' or normalize-space(.)='去完成' or normalize-space(.)='去签到'])]",
-    "SIGN_IN_BTN_FALLBACK": "//span[contains(normalize-space(.), '每日签到')]/ancestor::div[1]//*[self::a or self::button or self::span][normalize-space(.)='领取奖励' or normalize-space(.)='去完成' or normalize-space(.)='去签到'][not(.//*[self::a or self::button or self::span][normalize-space(.)='领取奖励' or normalize-space(.)='去完成' or normalize-space(.)='去签到'])]",
+    # 匹配签到文案的最内层精确文本节点；控件可能不是标准 a/button/span 标签。
+    "SIGN_IN_BTN": "//div[contains(@class, 'card-header') and .//span[contains(normalize-space(.), '每日签到')]]//*[normalize-space(.)='领取奖励' or normalize-space(.)='去完成' or normalize-space(.)='去签到'][not(.//*[normalize-space(.)='领取奖励' or normalize-space(.)='去完成' or normalize-space(.)='去签到'])]",
+    "SIGN_IN_BTN_FALLBACK": "//span[contains(normalize-space(.), '每日签到')]/ancestor::div[1]//*[normalize-space(.)='领取奖励' or normalize-space(.)='去完成' or normalize-space(.)='去签到'][not(.//*[normalize-space(.)='领取奖励' or normalize-space(.)='去完成' or normalize-space(.)='去签到'])]",
     # 页面新版优先通过积分语义定位，旧 XPath 仅作为最后兼容项。
     "POINTS_BY_LABEL": "//*[contains(normalize-space(.), '剩余积分') or contains(normalize-space(.), '当前积分') or contains(normalize-space(.), '积分余额')]/ancestor::*[self::div or self::section][1]//h3",
     "POINTS_HEADER": '//*[@id="app"]/div[1]/div[3]/div[2]/div/div/div[2]/div[1]/div[1]/div/p/div/h3',
