@@ -392,9 +392,13 @@ def download_captcha_img(ctx: RuntimeContext):
     def _slide_bg_ready(d):
         el = d.find_elements(By.XPATH, '//*[@id="slideBg"]')
         if not el:
+            logger.debug("slideBg 尚未出现")
             return False
         try:
-            return bool(get_url_from_style(el[0].get_attribute("style")))
+            style = el[0].get_attribute("style") or ""
+            if not style.strip():
+                logger.info(f"slideBg 已出现但 style 为空: outerHTML={ (el[0].get_attribute('outerHTML') or '')[:200] }")
+            return bool(get_url_from_style(style))
         except Exception:
             return False
 
@@ -683,15 +687,14 @@ def switch_to_visible_captcha_frame(driver: WebDriver, timeout: int = 10):
 
     def _visible_frame(d):
         frames = d.find_elements(By.XPATH, CAPTCHA_IFRAME_XPATH)
-        if len(frames) > 1:
-            for i, frame in enumerate(frames):
-                try:
-                    logger.info(
-                        f"验证码 iframe 候选{i}: id={frame.get_attribute('id')}, size={frame.size}, "
-                        f"displayed={frame.is_displayed()}"
-                    )
-                except Exception:
-                    pass
+        for i, frame in enumerate(frames):
+            try:
+                logger.info(
+                    f"验证码 iframe 候选{i}: id={frame.get_attribute('id')}, size={frame.size}, "
+                    f"displayed={frame.is_displayed()}"
+                )
+            except Exception:
+                pass
         for frame in frames:
             try:
                 size = frame.size or {}
