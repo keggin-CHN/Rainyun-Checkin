@@ -1,0 +1,17 @@
+name: CaptchaProbe
+on:
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+    - name: 设置 Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    - name: 安装依赖
+      run: pip install -r requirements.txt
+    - name: 真实腾讯点选验证码本地解题探针 (Chrome + headless=new)
+      run: python -u .ref/probe/probe_solve.py headless 3 chrome
