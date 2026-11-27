@@ -202,6 +202,16 @@ def show_captcha(driver):
         "var c=new TencentCaptcha('2039519451',function(r){window.__res=JSON.stringify(r);},{});c.show();")
 
 
+def _reload_captcha_in_frame(driver):
+    """在验证码 iframe 内点 #reload 换一张新图（仿真实代码，避免重载页面触发 beforeunload 卡死）。"""
+    try:
+        driver.find_element(By.XPATH, '//*[@id="reload"]').click()
+        time.sleep(1.8)
+        return True
+    except Exception:
+        return False
+
+
 def main():
     print(f"mode={MODE} tries={TRIES} browser={BROWSER}", flush=True)
     driver = _WebDriver(options=opts)
@@ -209,9 +219,19 @@ def main():
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": STEALTH})
         ok = 0
         done = 0
+        shown = False
         for i in range(1, TRIES + 1):
             try:
-                show_captcha(driver)
+                if not shown:
+                    show_captcha(driver)
+                    shown = True
+                elif not _reload_captcha_in_frame(driver):
+                    # 无法在原弹窗刷新（如上轮已成功关闭），退回重载页面
+                    try:
+                        driver.switch_to.alert.accept()
+                    except Exception:
+                        pass
+                    show_captcha(driver)
                 res = solve_once(driver, i)
                 if res is None:
                     print(f"[try {i}] SKIP(识别/点击失败)", flush=True)
@@ -220,14 +240,16 @@ def main():
                 if res:
                     ok += 1
                     print(f"[try {i}] PASS", flush=True)
+                    shown = False  # 成功后弹窗关闭，下一轮重载页面
                     try:
                         print("  cb __res =", driver.execute_script("return window.__res;"), flush=True)
                     except Exception:
                         pass
                 else:
-                    print(f"[try {i}] FAIL", flush=True)
+                    print(f"[try {i}] FAIL", flush=True)  # 保持 shown=True，下一轮用 #reload
             except Exception as e:
                 print(f"[try {i}] 异常: {type(e).__name__}: {str(e)[:150]}", flush=True)
+                shown = False
         print(f"===== 通过 {ok}/{done}（有效样本 {done}）=====", flush=True)
     finally:
         driver.quit()
