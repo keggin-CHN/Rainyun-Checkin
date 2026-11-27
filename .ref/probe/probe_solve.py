@@ -192,46 +192,43 @@ def solve_once(driver, i):
     return "show-success" in (cls or "")
 
 
+def show_captcha(driver):
+    """重新加载登录页并弹出一个全新验证码（保证每轮是未使用过的新图）。"""
+    driver.switch_to.default_content()
+    driver.get("https://app.rainyun.com/auth/login")
+    WebDriverWait(driver, 30).until(lambda d: d.execute_script("return typeof TencentCaptcha === 'function'"))
+    driver.execute_script(
+        "window.__res=null;"
+        "var c=new TencentCaptcha('2039519451',function(r){window.__res=JSON.stringify(r);},{});c.show();")
+
+
 def main():
     print(f"mode={MODE} tries={TRIES} browser={BROWSER}", flush=True)
     driver = _WebDriver(options=opts)
     try:
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": STEALTH})
-        driver.get("https://app.rainyun.com/auth/login")
-        WebDriverWait(driver, 30).until(lambda d: d.execute_script("return typeof TencentCaptcha === 'function'"))
-        if driver.execute_script("return typeof TencentCaptcha === 'undefined';"):
-            driver.execute_script("var s=document.createElement('script');s.src='https://turing.captcha.qcloud.com/TJCaptcha.js';document.head.appendChild(s);")
-            time.sleep(5)
-        driver.execute_script(
-            "window.__res=null;var c=new TencentCaptcha('2039519451',function(r){window.__res=JSON.stringify(r);},{});c.show();")
         ok = 0
+        done = 0
         for i in range(1, TRIES + 1):
             try:
+                show_captcha(driver)
                 res = solve_once(driver, i)
-                print(f"[try {i}] 结果: {'PASS' if res else ('FAIL' if res is False else 'SKIP(点击/识别失败)')}", flush=True)
+                if res is None:
+                    print(f"[try {i}] SKIP(识别/点击失败)", flush=True)
+                    continue
+                done += 1
                 if res:
                     ok += 1
+                    print(f"[try {i}] PASS", flush=True)
                     try:
                         print("  cb __res =", driver.execute_script("return window.__res;"), flush=True)
                     except Exception:
                         pass
-                    # 成功后重新弹一个再测
-                    if i < TRIES:
-                        driver.switch_to.default_content()
-                        time.sleep(1)
-                        driver.execute_script(
-                            "window.__res=null;var c=new TencentCaptcha('2039519451',function(r){window.__res=JSON.stringify(r);},{});c.show();")
-                        time.sleep(2)
+                else:
+                    print(f"[try {i}] FAIL", flush=True)
             except Exception as e:
                 print(f"[try {i}] 异常: {type(e).__name__}: {str(e)[:150]}", flush=True)
-                driver.switch_to.default_content()
-                try:
-                    driver.execute_script(
-                        "window.__res=null;var c=new TencentCaptcha('2039519451',function(r){window.__res=JSON.stringify(r);},{});c.show();")
-                    time.sleep(2)
-                except Exception:
-                    pass
-        print(f"===== 通过 {ok}/{TRIES} =====", flush=True)
+        print(f"===== 通过 {ok}/{done}（有效样本 {done}）=====", flush=True)
     finally:
         driver.quit()
 

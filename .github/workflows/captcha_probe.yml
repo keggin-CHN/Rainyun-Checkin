@@ -16,4 +16,4 @@ jobs:
     - name: 安装依赖
       run: pip install -r requirements.txt
     - name: 真实腾讯点选验证码本地解题探针 (Chrome + headless=new)
-      run: python -u .ref/probe/probe_solve.py headless 3 chrome
+      run: python -u .ref/probe/probe_solve.py headless 6 chrome
