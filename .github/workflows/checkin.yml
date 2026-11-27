@@ -34,7 +34,7 @@ jobs:
         RAINYUN_PWD: ${{ secrets.RAINYUN_PWD }}
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_USER_ID: ${{ secrets.TG_USER_ID }}
-        CAPTCHA_RETRY_LIMIT: "3"
+        CAPTCHA_RETRY_LIMIT: "5"
 
     - name: 上传验证码调试图 (账号1)
       if: always()
@@ -67,7 +67,7 @@ jobs:
         RAINYUN_PWD: ${{ secrets.RAINYUN_PWD_2 }}
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_USER_ID: ${{ secrets.TG_USER_ID }}
-        CAPTCHA_RETRY_LIMIT: "3"
+        CAPTCHA_RETRY_LIMIT: "5"
 
     - name: 上传验证码调试图 (账号2)
       if: always()
