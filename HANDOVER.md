@@ -70,19 +70,33 @@
 
 ---
 
-## 3. 当前卡点（下一步接手必读）
+## 3. 当前卡点（重要更正：之前的"根因"都已被证伪）
 
-**截至本文档更新时，整条流程已经全部打通**：登录 → 进赚取积分页 → 点卡片开弹窗 → 点奖励按钮 → 腾讯验证码弹出 → 图片下载成功 → 识别并点击 → 提交。
+> 本节经过两次更正，请以本版为准。此前两版分别把失败归因为"ICR 识别率""点错锁定奖励"，均被推翻。
 
-唯一剩下的问题是**验证码识别成功率**：
+**已被证伪的假设：**
+- ❌ ICR 识别 / 坐标映射错误：映射（`x/raw_w*bg_width`，按渲染后矩形）已证明正确；ICR 命中点落在真实深色图案上。
+- ❌ 点到锁定/已领取奖励：用户截图证实弹窗是「每天可任选一种奖励」，`500 积分`/`抽奖券 × 1` 默认都正常可选。日志里的 `opacity:0.65, enabled=False` 只是常规样式 + 点击后「处理中」态，不是锁定。基于 opacity 判 locked 的代码已撤销。
 
-- 提交 `2ec5182`（ICR 算法）触发的那次运行（Run `45818364034`）在本文档编写时仍在执行中，**结果未知**。
-- 如果该运行成功 → 问题已解决，收工。
-- 如果失败 → 大概率是识别准确率问题，接手方向：
-  1. 查看 Run `45818364034` 的日志（GitHub Actions → Checkin），关注 `识别到 N 个图案位置` 后的坐标值与 `验证码未通过` 的比例；
-  2. ICR 的匹配参数在 `ICR.py` 的 `main()` / `load_and_preprocess()` 中（黑度阈值 25/30、膨胀核、缩放系数 1.55 等），可调；
-  3. 备选方案：CMSZ001 的仓库（`CMSZ001/Rainyun-Qiandao-Docker`，2026-11-14 更新）是同类问题最成功的实现，它的 `ICR.py` 已原样移植到本项目，可 diff 它的 `rainyun.py` 与本项目的，看还有没有遗漏细节；
-  4. 验证码是随机图案，存在一定的"运气"成分，`CAPTCHA_RETRY_LIMIT`（config.py，默认 50）是重试上限。
+**关键事实（2026-11-27 发现，务必理解）：**
+- `job_45818364034.log`（40+ 次"验证码未通过"）是**旧版代码**跑的：它打 `图案 N 位于 (...)`。
+- 当前 HEAD `fc0ab07`（2026-11-27 10:30）才引入 `图案 N 图像坐标 ... -> 点击坐标 ... 命中元素`、`slideBg 布局`、`坐标映射`、`点击后标记层`，以及 `captcha_debug/` 调试图。
+- 因此 **HEAD 的这套修复从未在 GitHub 上真正运行过**，我们一直拿旧日志当证据。
+- `stealth.min.js` 其实一直在 `main()` 里（`driver.get` 之前）通过 `Page.addScriptToEvaluateOnNewDocument` 注入，并非缺失（本轮只是把它收敛到 `_apply_stealth()` 并补了 `navigator.webdriver` 兜底 + 真实 UA）。
+
+**结论（2026-11-27 本地真机实测，已实锤）：当前算法是对的。**
+
+用本地探针 `.ref/probe/probe_solve.py` 对**真实腾讯点选验证码**实测（不登录、不消耗签到次数）：真实弹出验证码 → 当前 ICR 识别 → 按渲染矩形映射 → ActionChains 点击 → 提交 → 读 `tcOperation`，**在 `--headless=new` 下 3/3 全部 `show-success` 通过**，命中元素全部是 `slideBg`。这证明：ICR 识别、坐标映射、点击、提交、判定——整套机制**完全正确**。
+
+由此反推旧 GitHub 运行（40+ 次失败）的原因：那份日志是**旧代码**（`图案 N 位于`），且 GitHub linux 分支当时用的是**旧版 `--headless`**。旧 headless 对点选类验证码的鼠标/渲染行为与真实浏览器差异极大，是已知坑。
+
+**已实施修复：** 将 `init_selenium` 的 linux 分支从 `--headless` 改为 **`--headless=new`**（与本地验证通过的运行环境一致）。
+
+下一步：
+1. **重新启用仓库 Actions**（用户操作；当前 disabled 无法触发）。
+2. 在一个**尚未签到**的日期 Run 一次（今天已手动签过，会直接检测到"已完成"并跳过——这是正确行为）。预期：`已点击每日签到弹窗奖励按钮` → `tcOperation class = ... show-success` → `验证码通过`。
+3. 若仍失败，下载 artifact `captcha-debug-account*/`：看 `aNN_annotated.jpg`（点位是否对）、`aNN_frame.png`（点击后是否有序号标记）、日志 `命中元素` / `tcOperation class`，再对症。
+4. 想复现/调参：直接跑 `.ref/probe/probe_solve.py`（`python probe_solve.py headless 5`），本地即可看真实成功率，快且不消耗签到。
 
 **一个必须了解的环境现象**：headless Chrome 下雨云所有弹层的 `is_displayed()` 都可能返回 `False`（弹层在视口外）。**任何新加的元素交互都不要依赖 `is_displayed()` 或 `EC.visibility_of_*`**，一律用 `presence` + JS click。这是本轮踩过的最大的坑。
 

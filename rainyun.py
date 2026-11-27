@@ -194,10 +194,21 @@ def init_selenium(debug: bool, linux: bool) -> WebDriver:
     ops = Options()
     ops.add_argument("--no-sandbox")
     ops.add_argument("--window-size=1920,1080")
+    # 反自动化检测：真实 UA + 去掉 Chrome 的「正受自动化软件控制」痕迹。
+    # 腾讯防水墙（本次签到验证码）会检测 navigator.webdriver/自动化特征，
+    # 一旦识别为脚本，即使点选完全正确也会静默判定失败（实测连续 40+ 次未通过）。
+    ops.add_argument(
+        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    )
+    ops.add_experimental_option("excludeSwitches", ["enable-automation"])
+    ops.add_experimental_option("useAutomationExtension", False)
     if debug:
         ops.add_experimental_option("detach", True)
     if linux:
-        ops.add_argument("--headless")
+        # 用新版 headless（Chrome 112+）。旧版 --headless 对点选类验证码的鼠标/渲染行为
+        # 与真实浏览器差异大，本地实测 --headless=new 下 ICR+点击+提交对真实验证码 3/3 通过。
+        ops.add_argument("--headless=new")
         ops.add_argument("--disable-gpu")
         ops.add_argument("--disable-dev-shm-usage")
         # 设置 Chromium 二进制路径（支持 ARM 和 AMD64）
@@ -220,6 +231,42 @@ def init_selenium(debug: bool, linux: bool) -> WebDriver:
     except Exception:
         pass
     return driver
+
+
+# 反检测兜底脚本：即使 stealth.min.js 缺失也能隐藏最关键的 webdriver 指纹
+_STEALTH_FALLBACK = r"""
+(function () {
+    try { Object.defineProperty(navigator, 'webdriver', { get: () => undefined }); } catch (e) {}
+    try { if (!window.chrome) { window.chrome = { runtime: {}, loadTimes: function(){}, csi: function(){}, app: {} }; } } catch (e) {}
+    try {
+        Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+    } catch (e) {}
+})();
+"""
+
+
+def _load_stealth_js() -> str:
+    """读取仓库根目录的 stealth.min.js（puppeteer-extra-stealth），并追加兜底脚本。"""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stealth.min.js")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read() + "\n" + _STEALTH_FALLBACK
+    except Exception as e:
+        logger.warning(f"读取 stealth.min.js 失败，改用内置反检测脚本: {e}")
+        return _STEALTH_FALLBACK
+
+
+def _apply_stealth(driver: WebDriver) -> None:
+    """通过 CDP 在每次新文档加载前注入反检测脚本。"""
+    try:
+        driver.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {"source": _load_stealth_js()},
+        )
+        logger.info("已注入反自动化检测脚本（navigator.webdriver 等指纹）")
+    except Exception as e:
+        logger.warning(f"注入反检测脚本失败（可能非 Chromium 内核）: {e}")
 
 
 def log_browser_console_errors(driver: WebDriver, limit: int = 5) -> None:
@@ -913,20 +960,36 @@ def log_sign_modal_diagnostic(driver: WebDriver, stage: str) -> None:
         logger.warning(f"[{stage}] 弹窗诊断失败: {type(e).__name__}")
 
 
+def _reward_btn_state(btn, driver) -> dict:
+    """读取奖励按钮状态用于诊断。
+
+    弹窗里两个奖励（500 积分 / 抽奖券 ×1）默认都「可任选一种」，常规样式本就可能是
+    opacity≈0.65、点击后进入处理态 enabled=False——这些属正常，不能据此判「锁定」。
+    只有 class/文本明确表示「已领取/明日」才算不可领。
+    """
+    cls = (btn.get_attribute("class") or "").lower()
+    text = re.sub(r"\s+", " ", (btn.get_attribute("innerText") or btn.text or "")).strip()
+    done = ("claimed" in cls) or ("done" in cls) or any(
+        k in text for k in ("已领", "已签", "明日", "不可领"))
+    return {"class": cls, "text": text, "done": done}
+
+
 def click_daily_sign_reward_button(driver: WebDriver, timeout: int = 10) -> bool:
-    """在新版“每日签到”弹窗中点击奖励按钮（默认第一个：500 积分）。
+    """在新版“每日签到”弹窗中点击奖励按钮（默认 500 积分）。
 
     前端流程：点击卡片头打开弹窗 -> 弹窗内选择奖励 -> 触发腾讯验证码。
-    若奖励按钮尚未出现（弹窗动画中），会持续等待 timeout 秒。
+    「每天可任选一种奖励」，两个奖励默认可选；只有 class/文本明确为「已领取/明日」
+    时才跳过。不要用 is_displayed()/is_enabled() 当门槛（headless 下弹层在视口外会误报）。
     """
     wait = WebDriverWait(driver, timeout, poll_frequency=0.5)
 
     def _find(d: WebDriver):
-        # 注意：headless 布局下弹窗可能整体位于视口外，is_displayed() 会误报 False，
-        # 因此只要求元素存在于 DOM 且可交互（enabled），点击一律走 JS。
+        # headless 下 is_displayed()/is_enabled() 对弹层会误报，不能用它们当门槛；
+        # 只要 DOM 里存在奖励按钮即可，「已领取/明日」由 _reward_btn_state 文本判定。
         try:
             for btn in d.find_elements(By.XPATH, DAILY_SIGN_REWARD_BTN_XPATH):
-                if btn.is_enabled():
+                st = _reward_btn_state(btn, d)
+                if not st["done"]:
                     return btn
         except Exception:
             pass
@@ -935,7 +998,16 @@ def click_daily_sign_reward_button(driver: WebDriver, timeout: int = 10) -> bool
     try:
         reward_btn = wait.until(_find)
     except TimeoutException:
+        # 没有找到奖励按钮（弹窗未打开或渲染失败），诊断后判失败。
         log_sign_modal_diagnostic(driver, "奖励按钮等待超时")
+        try:
+            for btn in driver.find_elements(By.XPATH, DAILY_SIGN_REWARD_BTN_XPATH):
+                st = _reward_btn_state(btn, driver)
+                logger.info(
+                    f"奖励按钮判定 done={st['done']} class={st['class'][:60]} text=[{st['text'][:40]}]"
+                )
+        except Exception:
+            pass
         return False
     reward_text = re.sub(r"\s+", " ", (reward_btn.get_attribute("innerText") or reward_btn.text or "").strip())
     driver.execute_script("arguments[0].click();", reward_btn)
@@ -1038,12 +1110,9 @@ def run():
         logger.info("初始化 Selenium")
         driver = init_selenium(debug=debug, linux=linux)
         
-        # 过 Selenium 检测
-        with open("stealth.min.js", mode="r") as f:
-            js = f.read()
-        driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-            "source": js
-        })
+        # 过 Selenium 检测：注入 stealth.min.js + 兜底隐藏 navigator.webdriver。
+        # 必须在 driver.get() 之前执行，才能覆盖首次加载的登录页及其后的验证码 iframe。
+        _apply_stealth(driver)
         
         wait = WebDriverWait(driver, timeout)
         temp_dir = tempfile.mkdtemp(prefix="rainyun-")
