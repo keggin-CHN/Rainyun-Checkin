@@ -35,3 +35,6 @@ Thumbs.db
 
 # Project
 backup/
+
+# Captcha debug artifacts
+captcha_debug/

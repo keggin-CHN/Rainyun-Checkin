@@ -342,12 +342,81 @@ def click_captcha_point(ctx: RuntimeContext, slide_bg, offset_x: float, offset_y
         return False
 
 
+def _has_duplicate_points(positions, min_distance: float = 30.0) -> bool:
+    """识别结果里出现过于接近的两个点，基本可以判定识别错误"""
+    for i in range(len(positions)):
+        for j in range(i + 1, len(positions)):
+            if (abs(positions[i][0] - positions[j][0]) < min_distance
+                    and abs(positions[i][1] - positions[j][1]) < min_distance):
+                return True
+    return False
+
+
+def get_slide_bg_layout(driver: WebDriver, slide_bg) -> dict:
+    """读取 slideBg 的实际渲染布局（含 CSS 变换后的尺寸）"""
+    return driver.execute_script(
+        "const el = arguments[0];"
+        "const r = el.getBoundingClientRect();"
+        "const cs = getComputedStyle(el);"
+        "return {left: r.left, top: r.top, width: r.width, height: r.height,"
+        "transform: cs.transform, zoom: cs.zoom,"
+        "style: (el.getAttribute('style') || '').slice(0, 300)};",
+        slide_bg,
+    ) or {}
+
+
+def probe_captcha_hit(driver: WebDriver, target_x: float, target_y: float) -> dict | None:
+    """用 elementFromPoint 校验目标点是否真的落在 slideBg 上（坐标映射错误会立刻暴露）"""
+    try:
+        return driver.execute_script(
+            "const b = document.getElementById('slideBg').getBoundingClientRect();"
+            "const el = document.elementFromPoint(b.left + arguments[0], b.top + arguments[1]);"
+            "if (!el) return null;"
+            "return {tag: el.tagName, id: el.id, cls: String(el.className).slice(0, 120)};",
+            target_x,
+            target_y,
+        )
+    except Exception as e:
+        logger.debug(f"elementFromPoint 探测失败: {e}")
+        return None
+
+
+def save_captcha_debug(ctx: RuntimeContext, attempt: int, positions=None) -> None:
+    """把验证码原图/标注图/截图保存到 captcha_debug/，GitHub Actions 会作为 artifact 上传"""
+    try:
+        debug_dir = os.path.join(os.getcwd(), "captcha_debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        for name in ("captcha.jpg", "sprite.jpg"):
+            src = temp_path(ctx, name)
+            dst = os.path.join(debug_dir, f"a{attempt:02d}_{name}")
+            if os.path.exists(src) and not os.path.exists(dst):
+                shutil.copy(src, dst)
+        if positions:
+            bg = cv2.imread(temp_path(ctx, "captcha.jpg"))
+            if bg is not None:
+                for i, (x, y) in enumerate(positions):
+                    cv2.circle(bg, (int(x), int(y)), 24, (0, 0, 255), 3)
+                    cv2.putText(bg, str(i + 1), (int(x) - 8, int(y) + 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+                cv2.imwrite(os.path.join(debug_dir, f"a{attempt:02d}_annotated.jpg"), bg)
+        shot = os.path.join(debug_dir, f"a{attempt:02d}_frame.png")
+        if not os.path.exists(shot):
+            try:
+                with open(shot, "wb") as f:
+                    f.write(ctx.driver.get_screenshot_as_png())
+            except Exception as e:
+                logger.debug(f"保存验证码截图失败: {e}")
+    except Exception as e:
+        logger.debug(f"保存验证码调试图失败: {e}")
+
+
 def process_captcha(ctx: RuntimeContext, retry_count: int = 0):
     if retry_count >= CAPTCHA_RETRY_LIMIT:
         logger.error("验证码重试次数过多，任务失败")
         return False
     try:
         download_captcha_img(ctx)
+        save_captcha_debug(ctx, retry_count + 1)
         logger.info(f"开始识别验证码 (第 {retry_count + 1} 次尝试)")
 
         # ICR 模板匹配：黑色区域提取 + ±45° 旋转匹配，替代旧的 SIFT 方案
@@ -362,25 +431,37 @@ def process_captcha(ctx: RuntimeContext, retry_count: int = 0):
             logger.error("验证码背景图读取失败，可能下载不完整")
             raise CaptchaRetryableError("验证码图片读取失败")
         raw_w, raw_h = captcha.shape[1], captcha.shape[0]
+        logger.info(f"验证码背景图尺寸: {raw_w}x{raw_h}")
+
+        if positions and len(positions) >= 2 and _has_duplicate_points(positions):
+            logger.warning(f"识别结果存在重复/过近的图案位置: {positions}，判定识别失败")
+            positions = None
 
         if not positions:
             logger.error("验证码识别失败，正在重试")
         else:
             logger.info(f"识别到 {len(positions)} 个图案位置")
+            save_captcha_debug(ctx, retry_count + 1, positions)
             all_clicked = True
             slide_bg = ctx.wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="slideBg"]')))
-            style = slide_bg.get_attribute("style")
-            try:
-                bg_width = get_width_from_style(style)
-                bg_height = get_height_from_style(style)
-            except ValueError:
-                bg_width, bg_height = get_element_size(slide_bg)
+            # 关键修复：tencent 验证码内容按自然尺寸绘制（如 640x640），再由 CSS 缩放到 iframe 内显示。
+            # 点击坐标必须映射到「渲染后的实际尺寸」，而不是 style 里的原始宽度/高度。
+            layout = get_slide_bg_layout(ctx.driver, slide_bg)
+            logger.info(f"slideBg 布局: {layout}")
+            bg_width = float(layout.get("width") or 0)
+            bg_height = float(layout.get("height") or 0)
+            if bg_width <= 0 or bg_height <= 0:
+                raise CaptchaRetryableError("slideBg 渲染尺寸异常")
+            logger.info(f"坐标映射: 图像 {raw_w}x{raw_h} -> 渲染 {bg_width:.1f}x{bg_height:.1f}")
 
             for i, (x, y) in enumerate(positions):
-                logger.info(f"图案 {i + 1} 位于 ({int(x)}, {int(y)})")
-                # 目标坐标相对图片左上角（旧实现错误地从中心偏移起算）
                 target_x = x / raw_w * bg_width
                 target_y = y / raw_h * bg_height
+                hit = probe_captcha_hit(ctx.driver, target_x, target_y)
+                logger.info(
+                    f"图案 {i + 1} 图像坐标 ({int(x)}, {int(y)}) -> 点击坐标 "
+                    f"({target_x:.1f}, {target_y:.1f}) 命中元素: {hit}"
+                )
                 if not click_captcha_point(ctx, slide_bg, target_x, target_y):
                     logger.error("验证码坐标点击失败，跳过提交并刷新重试")
                     all_clicked = False
@@ -390,6 +471,14 @@ def process_captcha(ctx: RuntimeContext, retry_count: int = 0):
                     time.sleep(random.uniform(0.4, 0.9))
 
             if all_clicked:
+                try:
+                    host_html = ctx.driver.execute_script(
+                        "const el = document.getElementById('slideBg');"
+                        "const host = el && el.parentElement;"
+                        "return host ? host.outerHTML.slice(0, 1800) : '';")
+                    logger.info(f"点击后标记层 HTML: {host_html}")
+                except Exception as e:
+                    logger.debug(f"读取标记层失败: {e}")
                 confirm = ctx.wait.until(
                     EC.presence_of_element_located((By.XPATH, '//*[@id="tcStatus"]/div[2]/div[2]/div/div')))
                 logger.info("提交验证码")
@@ -747,7 +836,7 @@ def switch_to_visible_captcha_frame(driver: WebDriver, timeout: int = 10):
             try:
                 logger.info(
                     f"验证码 iframe 候选{i}: id={frame.get_attribute('id')}, size={frame.size}, "
-                    f"displayed={frame.is_displayed()}"
+                    f"rect={frame.rect}, displayed={frame.is_displayed()}"
                 )
             except Exception:
                 pass
@@ -766,6 +855,12 @@ def switch_to_visible_captcha_frame(driver: WebDriver, timeout: int = 10):
         return False
 
     frame = WebDriverWait(driver, timeout, poll_frequency=0.5).until(_visible_frame)
+    try:
+        os.makedirs("captcha_debug", exist_ok=True)
+        with open(os.path.join("captcha_debug", f"iframe_{int(time.time())}.png"), "wb") as f:
+            f.write(frame.screenshot_as_png)
+    except Exception as e:
+        logger.debug(f"保存验证码 iframe 截图失败: {e}")
     driver.switch_to.frame(frame)
     return frame
 
