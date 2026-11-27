@@ -1,6 +1,8 @@
 name: CaptchaProbe
 on:
   workflow_dispatch:
+  push:
+    branches: [fix/captcha-headless-new]
 jobs:
   probe:
     runs-on: ubuntu-latest
